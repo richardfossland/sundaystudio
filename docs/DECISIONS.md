@@ -67,6 +67,42 @@ this file degrades to "last-used defaults".
 and human-inspectable); failing hard on a corrupt settings file (audio config
 is recoverable — we fall back to safe defaults instead).
 
+## ADR-0011 — Master chain: look-ahead brick-wall limiter, LR4 multiband, glue-then-gain-then-limit (Phase 4.2b)
+
+**Decision.** The master chain is EQ → 3-band compressor → brick-wall limiter.
+The multiband split uses 4th-order Linkwitz-Riley crossovers (two cascaded
+Butterworth biquads each) so low+high recombine flat in magnitude — bands reuse
+the Phase 4.1 `Compressor`. The limiter is a look-ahead peak limiter: it delays
+the signal a few ms and tracks the minimum allowed gain across the look-ahead
+window with a monotonic min-deque (O(1)/sample), so attack is effectively instant
+(the reduction lands before the transient) and only release is smoothed —
+guaranteeing no overshoot. `master_normalize` runs **glue first, then the
+loudness gain, then the limiter last**: EQ and the compressor's auto-makeup change
+level, so the gain to target must be computed against the glued signal; the
+limiter has the final word on the ceiling. Per-band scratch buffers are reusable
+(grow-only), so steady-state blocks allocate nothing.
+
+**Context.** A loud platform target (-14 LUFS) is unreachable by gain alone
+without clipping (ADR-0010's `normalize_clip_safe` caps and flags this); a
+limiter is what lets a mix get loud honestly. Look-ahead with a window-minimum
+is the standard way to make a brick wall transparent and _provably_ non-
+overshooting (the envelope can never sit above what an upcoming peak demands).
+The first version computed the loudness gain against the raw input and overshot
+by ~3 dB because the multiband makeup added level afterwards — re-ordering to
+glue→measure→gain→limit fixed it. Tested by properties (limiter holds output
+≤ ceiling, passes a quiet signal through unchanged-but-delayed, catches a sudden
+transient with no overshoot; multiband reconstructs flat at unity and reduces a
+loud band; normalisation reaches a loud target within tolerance with no clip).
+
+**Rejected.** A simple feed-forward (no look-ahead) limiter (overshoots on
+transient attacks — audible clipping is exactly what a master limiter must
+prevent); a true-peak 4× oversampling limiter now (heavier; the loudness
+re-measure already verifies the true-peak result, and the ceiling sits below the
+true-peak target to leave inter-sample headroom — oversampling is a later
+refinement if measurements demand); a single full-band master compressor (low-end
+pumps the whole mix); allocating band buffers per block (reusable grow-only
+scratch keeps steady-state allocation-free per the engine discipline).
+
 ## ADR-0010 — Loudness via the `ebur128` crate, normalisation is clip-safe first (Phase 4.2a)
 
 **Decision.** LUFS / true-peak measurement uses the `ebur128` crate (a pure-Rust
