@@ -1,0 +1,77 @@
+# Build and publish SundayStudio installers for macOS + Windows on a version
+# tag. Produces a DRAFT GitHub Release with the bundled installers attached;
+# review the draft, then publish.
+#
+# Cut a release:   npm version <patch|minor|major>   (bumps package.json)
+#                  # bump src-tauri/tauri.conf.json "version" to match
+#                  git tag vX.Y.Z && git push origin vX.Y.Z
+#
+# TEST builds for now: UNSIGNED (no Apple notarization / Windows cert) and no
+# auto-updater manifest. Code signing + notarization + the updater plugin are
+# Phase 9.2 — add the documented secrets (see docs/DISTRIBUTION.md, to come)
+# and flip `includeUpdaterJson` on then. Unsigned apps warn on first launch:
+# macOS → right-click ▸ Open; Windows → "More info" ▸ "Run anyway".
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-latest is Apple Silicon (arm64). Intel/universal is a
+          # follow-up (needs a universal target + matching deps).
+          - platform: macos-latest
+            args: ""
+          - platform: windows-latest
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo (src-tauri)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and publish (unsigned test build)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "SundayStudio ${{ github.ref_name }}"
+          releaseBody: |
+            Test build of SundayStudio — the church podcast & jingle studio.
+
+            ⚠️ These installers are UNSIGNED (test release). On first launch:
+            - macOS: right-click the app ▸ Open ▸ Open.
+            - Windows: "More info" ▸ "Run anyway".
+
+            Signed + notarized builds with auto-update land in a later release.
+          releaseDraft: true
+          prerelease: true
+          includeUpdaterJson: false
+          args: ${{ matrix.args }}
