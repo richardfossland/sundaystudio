@@ -12,5 +12,6 @@
 //! proven first (see docs/ARCHITECTURE.md).
 
 pub mod devices;
+pub mod recorder;
 pub mod settings;
 pub mod tone;

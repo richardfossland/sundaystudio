@@ -32,6 +32,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # canonical WAV to disk. The rest of the engine grows on top of these.
 cpal = "0.15"
 hound = "3.5"
+# Lock-free SPSC ring buffer — carries samples from the real-time audio
+# callback to the writer thread without locks or allocation (Phase 1.2).
+rtrb = "0.3"
 
 # Type generation for the frontend (run with `cargo test export_bindings`)
 ts-rs = { version = "11", features = ["serde-compat"] }

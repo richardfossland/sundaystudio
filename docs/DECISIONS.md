@@ -67,6 +67,30 @@ this file degrades to "last-used defaults".
 and human-inspectable); failing hard on a corrupt settings file (audio config
 is recoverable — we fall back to safe defaults instead).
 
+## ADR-0006 — Recorder split for testability without hardware (Phase 1.2)
+
+**Decision.** The recording engine is split so the cpal device stream is the
+only hardware-dependent piece. The audio callback's logic lives in
+`CaptureSink::push_interleaved` (plain function, no device); `session` wires
+per-channel rtrb rings to a writer thread that drains them to 24-bit WAVs. The
+integration test drives `push_interleaved` with synthetic frames and asserts
+the on-disk WAVs and meters — proving ring → writer → disk with no audio device.
+`stream.rs` (opening the real cpal stream) is `pub`, wired, and documented as
+hardware-unverified.
+
+**Context.** This session has no audio hardware, and "recording reliability is
+sacred" forbids shipping a blind, unverified real-time engine as done. Pushing
+all the real-time-safe logic behind a device-free seam lets us unit-test the
+risky data path (rings, draining, crash-safe flush, meters, sample counts) now,
+and leaves a single, clearly-flagged surface (`stream.rs`) for hardware
+validation in Phase 2.2 against the interface matrix in ARCHITECTURE.md.
+
+**Rejected.** Wiring live `audio_record_start/stop` Tauri commands now (the
+Stream lifecycle + `!Send` ownership + xrun behaviour genuinely need a device
+in the loop — building it blind would be unverified and likely subtly wrong);
+faking a device in tests (cpal's loopback/virtual-device story is platform-
+specific and brittle — a device-free seam is simpler and proves more).
+
 ## ADR-0004 — AI is isolated from the audio engine, opt-in, Pro-gated
 
 **Decision.** Every AI feature is HTTP-based (Anthropic for analysis/suggestions,
