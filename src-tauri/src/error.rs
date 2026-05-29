@@ -26,6 +26,10 @@ pub enum AppError {
     #[error("audio error: {0}")]
     Audio(String),
 
+    /// Project storage / SQLite failure.
+    #[error("database: {0}")]
+    Database(String),
+
     /// File-system / IO failure.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
@@ -46,6 +50,7 @@ impl AppError {
             AppError::NotFound { .. } => "not_found",
             AppError::Validation(_) => "validation",
             AppError::Audio(_) => "audio",
+            AppError::Database(_) => "database",
             AppError::Io(_) => "io",
             AppError::Json(_) => "json",
             AppError::Internal(_) => "internal",
@@ -65,6 +70,18 @@ impl Serialize for AppError {
         s.serialize_field("code", self.code())?;
         s.serialize_field("message", &self.to_string())?;
         s.end()
+    }
+}
+
+impl From<sqlx::Error> for AppError {
+    fn from(e: sqlx::Error) -> Self {
+        AppError::Database(e.to_string())
+    }
+}
+
+impl From<sqlx::migrate::MigrateError> for AppError {
+    fn from(e: sqlx::migrate::MigrateError) -> Self {
+        AppError::Database(format!("migration: {e}"))
     }
 }
 

@@ -38,6 +38,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(commands::project::ProjectState::default())
         .setup(|_app| {
             tracing::info!("SundayStudio backend ready");
             Ok(())
@@ -49,6 +50,17 @@ pub fn run() {
             commands::audio::audio_get_settings,
             commands::audio::audio_set_settings,
             commands::audio::audio_latency_estimate,
+            commands::project::project_create,
+            commands::project::project_open,
+            commands::project::project_recent,
+            commands::project::project_snapshot,
+            commands::project::project_rename,
+            commands::project::project_backup,
+            commands::project::track_add,
+            commands::project::track_update,
+            commands::project::track_delete,
+            commands::project::marker_add,
+            commands::project::marker_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

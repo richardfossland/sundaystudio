@@ -67,6 +67,29 @@ this file degrades to "last-used defaults".
 and human-inspectable); failing hard on a corrupt settings file (audio config
 is recoverable — we fall back to safe defaults instead).
 
+## ADR-0007 — `.scast` folder + SQLite tape model (Phase 2.1)
+
+**Decision.** A project is a `.scast` folder: `manifest.json` + `project.sqlite`
+(metadata only) + `takes/` (WAVs) + `edits/` + `exports/` + `cache/backups/`.
+The database holds the tape model — Project → Track / Take → Region (+ Marker,
+and forward-compat tables for effects/automation/jingles) — never audio. Access
+is through sqlx runtime-checked queries; every mutation persists immediately
+(no explicit "save"). Times/positions/durations are `f64` ms and rates/counts
+`i32`, so the generated TypeScript stays plain `number` (no `bigint`).
+
+**Context.** The "tape model" (takes are immutable; regions reference ranges
+within them) is what makes editing non-destructive and keeps the database tiny
+(< 5 MB) while `takes/` holds the gigabytes — directly answering GarageBand's
+"files are too huge". Functions take `&SqlitePool`, so the whole store is
+unit-tested against a throwaway temp database with no app or device. Recent
+projects + hourly backup rotation (keep 5) live app-side, mirroring the audio
+settings approach.
+
+**Rejected.** A single opaque project file (can't stream gigabytes of audio in/
+out, and bloats like GarageBand); compile-time-checked `query!` macros (would
+require DATABASE_URL/`.sqlx` in CI — runtime queries keep the build hermetic);
+`i64`/chrono timestamps (force `bigint` into the TS layer for no benefit here).
+
 ## ADR-0006 — Recorder split for testability without hardware (Phase 1.2)
 
 **Decision.** The recording engine is split so the cpal device stream is the

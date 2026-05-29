@@ -14,6 +14,13 @@ export type { ToneResult } from "./ToneResult";
 export type { AudioSettings } from "./AudioSettings";
 export type { LatencyEstimate } from "./LatencyEstimate";
 export type { LatencyZone } from "./LatencyZone";
+export type { Project } from "./Project";
+export type { Track } from "./Track";
+export type { Take } from "./Take";
+export type { Region } from "./Region";
+export type { Marker } from "./Marker";
+export type { ProjectSnapshot } from "./ProjectSnapshot";
+export type { RecentProject } from "./RecentProject";
 
 /** Error shape returned by every Tauri command (see error.rs).
  *  Keep this union in sync with `AppError::code()` in Rust. */

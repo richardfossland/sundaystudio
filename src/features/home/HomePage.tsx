@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   CircleDot,
+  FolderOpen,
   Loader2,
   Mic,
   Settings,
@@ -37,6 +38,10 @@ export function HomePage({
   const devices = useQuery({
     queryKey: ["audio_devices"],
     queryFn: ipc.audio.devices,
+  });
+  const recent = useQuery({
+    queryKey: ["project_recent"],
+    queryFn: ipc.project.recent,
   });
 
   const [tone, setTone] = useState<ToneResult | null>(null);
@@ -81,6 +86,36 @@ export function HomePage({
           )}
         </div>
       </header>
+
+      {/* Recent projects */}
+      <section className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <FolderOpen size={15} className="text-[var(--color-fg-muted)]" />
+          <h2 className="text-ui-md font-semibold">Recent projects</h2>
+        </div>
+        {recent.isSuccess && recent.data.length > 0 ? (
+          <ul className="flex flex-col gap-1.5">
+            {recent.data.map((p) => (
+              <li
+                key={p.path}
+                className="flex items-baseline justify-between gap-3 rounded-[var(--radius-sm)] bg-[var(--color-bg-surface)] px-3 py-2"
+              >
+                <span className="truncate text-ui-sm font-medium">
+                  {p.name}
+                </span>
+                <span className="shrink-0 truncate font-mono text-[11px] text-[var(--color-fg-muted)]">
+                  {p.path}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-ui-sm text-[var(--color-fg-muted)]">
+            No recent projects yet. Project create/open from a template gallery
+            arrives in Phase 2.3.
+          </p>
+        )}
+      </section>
 
       {/* Backend identity */}
       <section className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">

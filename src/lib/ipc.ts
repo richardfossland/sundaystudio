@@ -18,7 +18,12 @@ import type {
   AudioDeviceList,
   AudioSettings,
   LatencyEstimate,
+  Marker,
+  Project,
+  ProjectSnapshot,
+  RecentProject,
   ToneResult,
+  Track,
 } from "./bindings";
 
 const DEV = import.meta.env.DEV;
@@ -85,5 +90,45 @@ export const audio = {
     }),
 };
 
+// ── Project ──────────────────────────────────────────────────────────────────
+
+export const project = {
+  /** Create a new `.scast` project at `path` and make it current. */
+  create: (
+    path: string,
+    name: string,
+    sampleRate: number,
+    channelCount: number,
+  ) =>
+    call<ProjectSnapshot>("project_create", {
+      path,
+      name,
+      sampleRate,
+      channelCount,
+    }),
+  /** Open an existing project and make it current. */
+  open: (path: string) => call<ProjectSnapshot>("project_open", { path }),
+  /** Recent projects, most-recent first. */
+  recent: () => call<RecentProject[]>("project_recent"),
+  /** Reload the current project (project + tracks + markers). */
+  snapshot: () => call<ProjectSnapshot>("project_snapshot"),
+  /** Rename the current project. */
+  rename: (name: string) => call<Project>("project_rename", { name }),
+  /** Back up the current project's database; returns the backup path. */
+  backup: () => call<string>("project_backup"),
+  /** Add a track to the current project. */
+  addTrack: (name: string, color: string) =>
+    call<Track>("track_add", { name, color }),
+  /** Persist a track's state. */
+  updateTrack: (track: Track) => call<void>("track_update", { track }),
+  /** Delete a track. */
+  deleteTrack: (id: string) => call<void>("track_delete", { id }),
+  /** Add a marker / chapter. */
+  addMarker: (positionMs: number, label: string, color: string) =>
+    call<Marker>("marker_add", { positionMs, label, color }),
+  /** Delete a marker. */
+  deleteMarker: (id: string) => call<void>("marker_delete", { id }),
+};
+
 /** Bundled namespace for ergonomic imports. */
-export const ipc = { app, audio };
+export const ipc = { app, audio, project };

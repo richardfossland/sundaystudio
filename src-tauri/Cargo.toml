@@ -36,6 +36,12 @@ hound = "3.5"
 # callback to the writer thread without locks or allocation (Phase 1.2).
 rtrb = "0.3"
 
+# Project storage (Phase 2.1) — local-first SQLite via sqlx. Runtime-checked
+# queries (no DATABASE_URL / .sqlx needed at compile time).
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v7"] }
+
 # Type generation for the frontend (run with `cargo test export_bindings`)
 ts-rs = { version = "11", features = ["serde-compat"] }
 
