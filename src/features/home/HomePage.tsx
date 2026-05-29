@@ -2,12 +2,11 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ArrowLeft,
   CheckCircle2,
   CircleDot,
-  FolderOpen,
   Loader2,
   Mic,
-  Settings,
   Volume2,
 } from "lucide-react";
 
@@ -17,31 +16,15 @@ import { ipc } from "@/lib/ipc";
 import type { AudioDevice, ToneResult } from "@/lib/bindings";
 
 /**
- * Phase 0.1 home screen — the "Hello SundayStudio" smoke test made visible.
- *
- * Three proofs of life, top to bottom:
- *   1. backend identity via `app_info` (Rust ↔ React bridge)
- *   2. the system's audio devices via `audio_devices` (cpal talks to the OS)
- *   3. a "Record test tone" button that writes a 1-second WAV (hound writes disk)
- *
- * This is deliberately a flat status page, not the eventual app. The record
- * surface, mixer, editor, jingle studio and export all arrive in later phases.
+ * Diagnostics screen — the original "Hello SundayStudio" smoke checks, kept as
+ * a dev/support tool reachable from the Start screen. Confirms the Rust ↔ React
+ * bridge, lists audio devices (cpal), and writes a test-tone WAV to disk (hound).
  */
-export function HomePage({
-  onOpenDesign,
-  onOpenSettings,
-}: {
-  onOpenDesign?: () => void;
-  onOpenSettings?: () => void;
-}) {
+export function HomePage({ onBack }: { onBack?: () => void }) {
   const info = useQuery({ queryKey: ["app_info"], queryFn: ipc.app.info });
   const devices = useQuery({
     queryKey: ["audio_devices"],
     queryFn: ipc.audio.devices,
-  });
-  const recent = useQuery({
-    queryKey: ["project_recent"],
-    queryFn: ipc.project.recent,
   });
 
   const [tone, setTone] = useState<ToneResult | null>(null);
@@ -64,58 +47,20 @@ export function HomePage({
 
   return (
     <div className="mx-auto flex min-h-screen max-w-2xl flex-col gap-8 px-6 py-12">
-      {/* Header */}
       <header className="flex items-center justify-between">
         <Brand size={32} />
         <div className="flex items-center gap-2">
-          {onOpenSettings && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onOpenSettings}
-              aria-label="Audio settings"
-            >
-              <Settings size={15} />
-              Audio
-            </Button>
-          )}
-          {onOpenDesign && (
-            <Button variant="ghost" size="sm" onClick={onOpenDesign}>
-              Design system →
+          <span className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-ui-xs font-medium uppercase tracking-widest text-[var(--color-fg-muted)]">
+            Diagnostics
+          </span>
+          {onBack && (
+            <Button variant="ghost" size="sm" onClick={onBack}>
+              <ArrowLeft size={15} />
+              Back
             </Button>
           )}
         </div>
       </header>
-
-      {/* Recent projects */}
-      <section className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">
-        <div className="mb-3 flex items-center gap-2">
-          <FolderOpen size={15} className="text-[var(--color-fg-muted)]" />
-          <h2 className="text-ui-md font-semibold">Recent projects</h2>
-        </div>
-        {recent.isSuccess && recent.data.length > 0 ? (
-          <ul className="flex flex-col gap-1.5">
-            {recent.data.map((p) => (
-              <li
-                key={p.path}
-                className="flex items-baseline justify-between gap-3 rounded-[var(--radius-sm)] bg-[var(--color-bg-surface)] px-3 py-2"
-              >
-                <span className="truncate text-ui-sm font-medium">
-                  {p.name}
-                </span>
-                <span className="shrink-0 truncate font-mono text-[11px] text-[var(--color-fg-muted)]">
-                  {p.path}
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-ui-sm text-[var(--color-fg-muted)]">
-            No recent projects yet. Project create/open from a template gallery
-            arrives in Phase 2.3.
-          </p>
-        )}
-      </section>
 
       {/* Backend identity */}
       <section className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">
@@ -178,8 +123,8 @@ export function HomePage({
       <section className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">
         <h2 className="mb-1 text-ui-md font-semibold">Record test tone</h2>
         <p className="mb-4 text-ui-sm text-[var(--color-fg-muted)]">
-          Writes a 1-second 440&nbsp;Hz sine wave to a WAV on disk — the
-          Phase&nbsp;0.1 proof that our recording-to-file path works.
+          Writes a 1-second 440&nbsp;Hz sine wave to a WAV on disk — proof the
+          recording-to-file path works.
         </p>
 
         <Button

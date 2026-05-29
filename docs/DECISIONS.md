@@ -67,6 +67,28 @@ this file degrades to "last-used defaults".
 and human-inspectable); failing hard on a corrupt settings file (audio config
 is recoverable — we fall back to safe defaults instead).
 
+## ADR-0008 — Templates as backend data; recording page is a real shell (Phase 2.3)
+
+**Decision.** The 8 quick-start templates are defined as pure data in Rust
+(`project::templates`) and materialised by `apply`, so they're unit-tested and
+there's one source of truth; the gallery renders them via `project_templates`.
+New/Open use the native dialog (`tauri-plugin-dialog`). The recording page binds
+real project tracks (arm/mute/solo/gain persist through the store) and chapters;
+its transport record button is an explicit visual placeholder, because live
+multi-track capture runs through the recorder's cpal stream and needs real
+hardware (so meters read silence here, with an on-screen note).
+
+**Context.** Templates are the on-ramp — most users should never see a blank
+project. Keeping them backend-side means `apply` (project + pre-wired tracks) is
+tested with no UI, and the gallery can't drift from what actually gets created.
+The recording page is honest about the hardware boundary set in Phase 1.2:
+everything that can work without a device (project/track/marker persistence)
+does and is wired; the one thing that can't (capture) is clearly marked.
+
+**Rejected.** Duplicating template metadata on the frontend (drift risk);
+faking meters/levels on the recording page (would imply capture works when it
+doesn't); a bespoke folder-picker (the native dialog is correct and accessible).
+
 ## ADR-0007 — `.scast` folder + SQLite tape model (Phase 2.1)
 
 **Decision.** A project is a `.scast` folder: `manifest.json` + `project.sqlite`

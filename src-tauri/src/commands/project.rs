@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 
 use crate::error::{AppError, AppResult};
 use crate::project::model::{Marker, Project, ProjectSnapshot, RecentProject, Track};
+use crate::project::templates::{self, TemplateInfo};
 use crate::project::{self, scast, store};
 
 /// The open project, or None when nothing is loaded.
@@ -58,6 +59,36 @@ pub async fn project_create(
 ) -> AppResult<ProjectSnapshot> {
     let scast_dir = PathBuf::from(&path);
     let (pool, project) = project::create(&scast_dir, &name, sample_rate, channel_count).await?;
+    let snapshot = store::load_snapshot(&pool).await?;
+    record_recent(&app, &project.name, &scast_dir)?;
+    *state.current.lock().await = Some(OpenProject {
+        pool,
+        scast_dir,
+        project_id: project.id,
+    });
+    Ok(snapshot)
+}
+
+/// The quick-start templates for the gallery.
+#[tauri::command]
+pub async fn project_templates() -> AppResult<Vec<TemplateInfo>> {
+    Ok(templates::all())
+}
+
+/// Create a project pre-configured from a quick-start template.
+#[tauri::command]
+pub async fn project_create_from_template(
+    app: AppHandle,
+    state: State<'_, ProjectState>,
+    path: String,
+    name: String,
+    template_id: String,
+) -> AppResult<ProjectSnapshot> {
+    let channel_count = templates::channel_count(&template_id)
+        .ok_or_else(|| AppError::Validation(format!("unknown template: {template_id}")))?;
+    let scast_dir = PathBuf::from(&path);
+    let (pool, project) = project::create(&scast_dir, &name, 48_000, channel_count).await?;
+    templates::apply(&pool, &project.id, &template_id).await?;
     let snapshot = store::load_snapshot(&pool).await?;
     record_recent(&app, &project.name, &scast_dir)?;
     *state.current.lock().await = Some(OpenProject {

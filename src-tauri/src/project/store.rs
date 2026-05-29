@@ -106,6 +106,18 @@ pub async fn add_track(
     name: &str,
     color: &str,
 ) -> AppResult<Track> {
+    add_track_with(pool, project_id, name, color, None).await
+}
+
+/// Append a track, also assigning its interface input channel. Used by
+/// templates, which pre-wire mics to channels.
+pub async fn add_track_with(
+    pool: &SqlitePool,
+    project_id: &str,
+    name: &str,
+    color: &str,
+    input_assignment: Option<i32>,
+) -> AppResult<Track> {
     // Next position = current count.
     let position: i32 = sqlx::query("SELECT COUNT(*) AS n FROM track WHERE project_id = ?")
         .bind(project_id)
@@ -118,7 +130,7 @@ pub async fn add_track(
         project_id: project_id.to_string(),
         name: name.to_string(),
         color: color.to_string(),
-        input_assignment: None,
+        input_assignment,
         output_assignment: None,
         gain_db: 0.0,
         pan: 0.0,

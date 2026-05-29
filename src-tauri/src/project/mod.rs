@@ -11,6 +11,7 @@
 pub mod model;
 pub mod scast;
 pub mod store;
+pub mod templates;
 
 use std::path::Path;
 

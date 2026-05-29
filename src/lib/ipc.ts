@@ -22,6 +22,7 @@ import type {
   Project,
   ProjectSnapshot,
   RecentProject,
+  TemplateInfo,
   ToneResult,
   Track,
 } from "./bindings";
@@ -105,6 +106,15 @@ export const project = {
       name,
       sampleRate,
       channelCount,
+    }),
+  /** The quick-start templates for the gallery. */
+  templates: () => call<TemplateInfo[]>("project_templates"),
+  /** Create a project pre-configured from a quick-start template. */
+  createFromTemplate: (path: string, name: string, templateId: string) =>
+    call<ProjectSnapshot>("project_create_from_template", {
+      path,
+      name,
+      templateId,
     }),
   /** Open an existing project and make it current. */
   open: (path: string) => call<ProjectSnapshot>("project_open", { path }),
