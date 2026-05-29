@@ -19,16 +19,16 @@ use crate::project::templates::{self, TemplateInfo};
 use crate::project::{self, scast, store};
 
 /// The open project, or None when nothing is loaded.
-struct OpenProject {
-    pool: sqlx::SqlitePool,
-    scast_dir: PathBuf,
-    project_id: String,
+pub(crate) struct OpenProject {
+    pub(crate) pool: sqlx::SqlitePool,
+    pub(crate) scast_dir: PathBuf,
+    pub(crate) project_id: String,
 }
 
 /// Tauri-managed state: at most one open project at a time.
 #[derive(Default)]
 pub struct ProjectState {
-    current: Mutex<Option<OpenProject>>,
+    pub(crate) current: Mutex<Option<OpenProject>>,
 }
 
 fn config_dir(app: &AppHandle) -> AppResult<PathBuf> {
@@ -194,7 +194,7 @@ pub async fn marker_delete(state: State<'_, ProjectState>, id: String) -> AppRes
 }
 
 /// Borrow the open project or return a clear "no project open" error.
-fn current(guard: &Option<OpenProject>) -> AppResult<&OpenProject> {
+pub(crate) fn current(guard: &Option<OpenProject>) -> AppResult<&OpenProject> {
     guard
         .as_ref()
         .ok_or_else(|| AppError::Validation("no project open".into()))

@@ -17,6 +17,8 @@ import type {
   AppInfo,
   AudioDeviceList,
   AudioSettings,
+  ExportPresetInfo,
+  ExportResult,
   LatencyEstimate,
   LoudnessMeasurement,
   LoudnessTarget,
@@ -158,5 +160,15 @@ export const dsp = {
     call<LoudnessMeasurement>("dsp_analyze_file", { path }),
 };
 
+// ── Export ───────────────────────────────────────────────────────────────────
+
+export const exporter = {
+  /** Platform-ready export presets (format + bitrate + channels + LUFS target). */
+  presets: () => call<ExportPresetInfo[]>("export_presets"),
+  /** Bounce the open project's latest take to a mastered, normalised WAV. */
+  render: (presetId: string, masterPresetId?: string) =>
+    call<ExportResult>("export_render", { presetId, masterPresetId }),
+};
+
 /** Bundled namespace for ergonomic imports. */
-export const ipc = { app, audio, project, dsp };
+export const ipc = { app, audio, project, dsp, exporter };

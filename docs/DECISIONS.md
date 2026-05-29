@@ -67,6 +67,40 @@ this file degrades to "last-used defaults".
 and human-inspectable); failing hard on a corrupt settings file (audio config
 is recoverable — we fall back to safe defaults instead).
 
+## ADR-0013 — Export renders a mastered WAV first; encoder is a separate sub-phase (Phase 7.1a)
+
+**Decision.** The export pipeline lands in two halves. 7.1a is the **bounce**: a
+pure renderer (`export/render.rs`) mixes the latest take's per-track mono WAVs,
+runs the chosen Phase 4.2 `MasterPreset` chain, loudness-normalises to the
+platform target, and writes a 24-bit master WAV to the project's `exports/`
+folder, verifying the result against the 0.5 LU threshold. Mastering is mono
+(the effects are mono; church podcasts are voice-first), expanded to the output
+layout afterwards — and loudness is measured/normalised on the **expanded**
+buffer because dual-mono stereo reads ~3 LU louder than the same mono (R128 sums
+channel energies). MP3/AAC/FLAC encoding via the bundled ffmpeg sidecar is 7.1b;
+those presets carry `requires_encoder = true` and, for now, still produce the
+master WAV with a `note` saying so. Export presets bundle format + bitrate +
+channels + LUFS target so one pick is upload-ready. The heavy mix + DSP + IO runs
+in `spawn_blocking` so the async runtime stays responsive.
+
+**Context.** The plan lists WAV as a first-class export ("pristine, for
+re-editing"), so a native WAV bounce is a complete, shippable feature on its own
+— and it's fully verifiable today with zero new toolchain, reusing the 4.2 DSP.
+Bundling ffmpeg is a real distribution task (a ~50 MB sidecar, per-platform
+binaries) that can't be exercised in this environment; gating it behind 7.1b
+keeps 7.1a honest and green rather than shipping a blind encoder path (the
+discipline of ADR-0002/0006). Tested by properties: mix sums/pads/respects mute,
+render hits the target within tolerance with no clip in both mono and stereo
+layouts (guarding the +3 LU channel trap), WAV round-trips within 24-bit error.
+
+**Rejected.** Calling ffmpeg now behind a feature flag (unverifiable without the
+binary — it would be untested code on the critical export path); mastering in
+true stereo (the effects are mono and the product is voice; faithful dual-mono is
+honest and correct for loudness — real stereo mastering is a later refinement);
+rendering straight to the requested lossy format (WAV is the natural lossless
+intermediate the encoder consumes, and a useful artifact in its own right);
+running the bounce on the async runtime (a multi-minute export would stall IPC).
+
 ## ADR-0012 — Mastering presets pair a chain with a target; loudness surfaces on Diagnostics first (Phase 4.2c)
 
 **Decision.** A mastering preset (Conversation Podcast / Sermon / Music-heavy /

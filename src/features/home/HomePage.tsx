@@ -5,6 +5,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   CircleDot,
+  FileAudio,
   Gauge,
   Loader2,
   Mic,
@@ -49,6 +50,10 @@ export function HomePage({ onBack }: { onBack?: () => void }) {
   const masterPresets = useQuery({
     queryKey: ["dsp_master_presets"],
     queryFn: ipc.dsp.masterPresets,
+  });
+  const exportPresets = useQuery({
+    queryKey: ["export_presets"],
+    queryFn: ipc.exporter.presets,
   });
 
   const [tone, setTone] = useState<ToneResult | null>(null);
@@ -315,6 +320,43 @@ export function HomePage({ onBack }: { onBack?: () => void }) {
                 className="rounded-[var(--radius-md)] bg-[var(--color-bg-surface)] p-3"
               >
                 <div className="text-ui-sm font-medium">{p.label}</div>
+                <div className="mt-0.5 text-ui-xs text-[var(--color-fg-muted)]">
+                  {p.description}
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <Muted>Presets load when running in the SundayStudio app.</Muted>
+        )}
+      </section>
+
+      {/* Export presets (Phase 7.1) */}
+      <section className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">
+        <div className="mb-1 flex items-center gap-2">
+          <FileAudio size={15} className="text-[var(--color-fg-muted)]" />
+          <h2 className="text-ui-md font-semibold">Export presets</h2>
+        </div>
+        <p className="mb-4 text-ui-sm text-[var(--color-fg-muted)]">
+          Platform-ready bounce settings. A finished episode renders to a
+          mastered, loudness-normalised file in the project&apos;s exports
+          folder. WAV writes natively; MP3/AAC arrive with the encoder.
+        </p>
+        {exportPresets.isSuccess ? (
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {exportPresets.data.map((p) => (
+              <li
+                key={p.id}
+                className="rounded-[var(--radius-md)] bg-[var(--color-bg-surface)] p-3"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-ui-sm font-medium">{p.label}</span>
+                  <span className="font-mono text-[11px] uppercase text-[var(--color-fg-muted)]">
+                    {p.format}
+                    {p.bitrate_kbps !== null && ` · ${p.bitrate_kbps}k`}
+                    {` · ${p.channels === 1 ? "mono" : "stereo"}`}
+                  </span>
+                </div>
                 <div className="mt-0.5 text-ui-xs text-[var(--color-fg-muted)]">
                   {p.description}
                 </div>

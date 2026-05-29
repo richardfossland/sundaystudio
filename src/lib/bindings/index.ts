@@ -30,6 +30,9 @@ export type { LoudnessMeasurement } from "./LoudnessMeasurement";
 export type { LoudnessTarget } from "./LoudnessTarget";
 export type { NormalizationReport } from "./NormalizationReport";
 export type { MasterPresetInfo } from "./MasterPresetInfo";
+export type { ExportFormat } from "./ExportFormat";
+export type { ExportPresetInfo } from "./ExportPresetInfo";
+export type { ExportResult } from "./ExportResult";
 
 /** Error shape returned by every Tauri command (see error.rs).
  *  Keep this union in sync with `AppError::code()` in Rust. */

@@ -68,6 +68,8 @@ pub fn run() {
             commands::dsp::dsp_loudness_targets,
             commands::dsp::dsp_master_presets,
             commands::dsp::dsp_analyze_file,
+            commands::export::export_presets,
+            commands::export::export_render,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

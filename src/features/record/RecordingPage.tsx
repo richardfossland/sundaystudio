@@ -1,12 +1,21 @@
 import { useState } from "react";
-import { ArrowLeft, Bookmark, Info, Plus } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Bookmark,
+  CheckCircle2,
+  Download,
+  Info,
+  Loader2,
+  Plus,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
 import { RecordButton, Timecode, TrackHeader } from "@/components/audio";
 import type { TrackState } from "@/components/audio";
 import { ipc } from "@/lib/ipc";
 import { useSession } from "@/lib/session";
-import type { Track } from "@/lib/bindings";
+import type { ExportResult, Track } from "@/lib/bindings";
 
 const TRACK_COLORS = [
   "#D4A73A",
@@ -34,9 +43,26 @@ export function RecordingPage({ onBack }: { onBack?: () => void }) {
     "idle" | "armed" | "recording"
   >("idle");
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportResult, setExportResult] = useState<ExportResult | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   if (!snapshot) return null;
   const { project, tracks, markers } = snapshot;
+
+  async function doExport() {
+    setExporting(true);
+    setExportError(null);
+    setExportResult(null);
+    try {
+      // WAV is the natively-writable format today; mastered + normalised.
+      setExportResult(await ipc.exporter.render("wav-archival"));
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setExporting(false);
+    }
+  }
 
   async function refresh() {
     setSnapshot(await ipc.project.snapshot());
@@ -110,6 +136,19 @@ export function RecordingPage({ onBack }: { onBack?: () => void }) {
         </div>
 
         <div className="flex items-center gap-5">
+          <Button
+            variant="surface"
+            size="sm"
+            onClick={doExport}
+            disabled={exporting}
+          >
+            {exporting ? (
+              <Loader2 size={15} className="animate-spin" />
+            ) : (
+              <Download size={15} />
+            )}
+            {exporting ? "Exporting…" : "Export"}
+          </Button>
           <Timecode ms={0} size="md" />
           <div className="flex flex-col items-center gap-1">
             <RecordButton
@@ -136,6 +175,38 @@ export function RecordingPage({ onBack }: { onBack?: () => void }) {
         on real audio hardware. Track settings and chapters below are saved to
         the project.
       </div>
+
+      {/* Export result / error */}
+      {exportResult && (
+        <div className="flex items-start gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-surface)] px-5 py-2 text-ui-xs">
+          <CheckCircle2
+            size={14}
+            className="mt-0.5 shrink-0 text-[var(--color-success)]"
+          />
+          <div>
+            <span className="font-medium">
+              Exported{" "}
+              {exportResult.loudness.after.integrated_lufs !== null &&
+                `at ${exportResult.loudness.after.integrated_lufs.toFixed(1)} LUFS · `}
+              {(exportResult.bytes / 1024 / 1024).toFixed(1)} MB
+            </span>{" "}
+            <code className="break-all text-[var(--color-fg-muted)]">
+              {exportResult.output_path}
+            </code>
+            {exportResult.note && (
+              <div className="mt-0.5 text-[var(--color-fg-muted)]">
+                {exportResult.note}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {exportError && (
+        <div className="flex items-start gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-surface)] px-5 py-2 text-ui-xs text-[var(--color-danger)]">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <span className="break-all">{exportError}</span>
+        </div>
+      )}
 
       {/* Tracks */}
       <div className="flex-1 overflow-y-auto px-5 py-4">
