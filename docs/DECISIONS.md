@@ -67,6 +67,32 @@ this file degrades to "last-used defaults".
 and human-inspectable); failing hard on a corrupt settings file (audio config
 is recoverable — we fall back to safe defaults instead).
 
+## ADR-0009 — DSP effects tested by signal properties, not byte goldens (Phase 4.1)
+
+**Decision.** The five bundled voice effects (gate, 4-band parametric EQ,
+de-esser, compressor, saturator) are pure Rust implementing a common `Effect`
+trait (prepare / process-in-place / reset), composed into a `VoiceChain` with
+factory presets (Voice / Bright Voice / Warm Voice / Broadcast). They are tested
+by _signal properties_ — frequency response, gain reduction above threshold,
+soft-clip peak taming — with tolerances, not by exact output fingerprints.
+
+**Context.** The audio golden harness (ADR-0002-era) fingerprints exact bytes,
+which is right for the deterministic integer test tone but wrong for float DSP:
+`sin`/`tanh`/`powf` differ in the last bits across platforms and compilers, so a
+byte-exact golden would be flaky in CI. Property tests (a 1 kHz tone gains ~6 dB
+through a +6 dB bell; 40 Hz is cut >6 dB by a voice preset's high-pass; a 4:1
+compressor pulls a 0 dBFS tone down >8 dB) are both robust and meaningful, and
+match the plan's "perceptually equivalent / within tolerance" bar.
+
+The de-esser detects on a high-pass side-chain but ducks broadband: complementary
+band recombination (`low = x − high`) leaks phase-shifted highs near the
+crossover, weakening reduction; broadband ducking keyed on the sibilance band is
+phase-coherent and is how most simple de-essers work.
+
+**Rejected.** Byte-exact DSP goldens (cross-platform flaky); pulling in a DSP
+framework (`fundsp`/`dasp`) — these effects are small, and hand-rolled RBJ
+biquads + envelope followers keep the dependency surface and the math legible.
+
 ## ADR-0008 — Templates as backend data; recording page is a real shell (Phase 2.3)
 
 **Decision.** The 8 quick-start templates are defined as pure data in Rust

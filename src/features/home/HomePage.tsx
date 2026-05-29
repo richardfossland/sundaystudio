@@ -7,6 +7,7 @@ import {
   CircleDot,
   Loader2,
   Mic,
+  Sliders,
   Volume2,
 } from "lucide-react";
 
@@ -25,6 +26,10 @@ export function HomePage({ onBack }: { onBack?: () => void }) {
   const devices = useQuery({
     queryKey: ["audio_devices"],
     queryFn: ipc.audio.devices,
+  });
+  const presets = useQuery({
+    queryKey: ["dsp_presets"],
+    queryFn: ipc.dsp.presets,
   });
 
   const [tone, setTone] = useState<ToneResult | null>(null);
@@ -163,6 +168,35 @@ export function HomePage({ onBack }: { onBack?: () => void }) {
             <AlertTriangle size={16} className="mt-0.5 shrink-0" />
             <span className="break-all">{toneError}</span>
           </div>
+        )}
+      </section>
+
+      {/* Bundled voice presets (DSP engine, Phase 4.1) */}
+      <section className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">
+        <div className="mb-1 flex items-center gap-2">
+          <Sliders size={15} className="text-[var(--color-fg-muted)]" />
+          <h2 className="text-ui-md font-semibold">Voice presets</h2>
+        </div>
+        <p className="mb-4 text-ui-sm text-[var(--color-fg-muted)]">
+          Bundled processing chains (gate · EQ · de-esser · compressor ·
+          saturator). They attach to mixer tracks in a later phase.
+        </p>
+        {presets.isSuccess ? (
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {presets.data.map((p) => (
+              <li
+                key={p.id}
+                className="rounded-[var(--radius-md)] bg-[var(--color-bg-surface)] p-3"
+              >
+                <div className="text-ui-sm font-medium">{p.label}</div>
+                <div className="mt-0.5 text-ui-xs text-[var(--color-fg-muted)]">
+                  {p.description}
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <Muted>Presets load when running in the SundayStudio app.</Muted>
         )}
       </section>
     </div>

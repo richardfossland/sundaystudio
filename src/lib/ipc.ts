@@ -19,6 +19,7 @@ import type {
   AudioSettings,
   LatencyEstimate,
   Marker,
+  PresetInfo,
   Project,
   ProjectSnapshot,
   RecentProject,
@@ -140,5 +141,12 @@ export const project = {
   deleteMarker: (id: string) => call<void>("marker_delete", { id }),
 };
 
+// ── DSP ──────────────────────────────────────────────────────────────────────
+
+export const dsp = {
+  /** Bundled voice-processing factory presets. */
+  presets: () => call<PresetInfo[]>("dsp_presets"),
+};
+
 /** Bundled namespace for ergonomic imports. */
-export const ipc = { app, audio, project };
+export const ipc = { app, audio, project, dsp };

@@ -7,4 +7,5 @@
 
 pub mod app;
 pub mod audio;
+pub mod dsp;
 pub mod project;

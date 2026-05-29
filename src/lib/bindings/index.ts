@@ -23,6 +23,9 @@ export type { ProjectSnapshot } from "./ProjectSnapshot";
 export type { RecentProject } from "./RecentProject";
 export type { TemplateInfo } from "./TemplateInfo";
 export type { TemplateTrackInfo } from "./TemplateTrackInfo";
+export type { PresetInfo } from "./PresetInfo";
+export type { EqBand } from "./EqBand";
+export type { EqBandType } from "./EqBandType";
 
 /** Error shape returned by every Tauri command (see error.rs).
  *  Keep this union in sync with `AppError::code()` in Rust. */
