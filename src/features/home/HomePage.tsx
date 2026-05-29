@@ -25,7 +25,7 @@ import type { AudioDevice, ToneResult } from "@/lib/bindings";
  * This is deliberately a flat status page, not the eventual app. The record
  * surface, mixer, editor, jingle studio and export all arrive in later phases.
  */
-export function HomePage() {
+export function HomePage({ onOpenDesign }: { onOpenDesign?: () => void }) {
   const info = useQuery({ queryKey: ["app_info"], queryFn: ipc.app.info });
   const devices = useQuery({
     queryKey: ["audio_devices"],
@@ -55,9 +55,16 @@ export function HomePage() {
       {/* Header */}
       <header className="flex items-center justify-between">
         <Brand size={32} />
-        <span className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-ui-xs font-medium uppercase tracking-widest text-[var(--color-fg-muted)]">
-          Phase 0.1 · Foundation
-        </span>
+        <div className="flex items-center gap-2">
+          {onOpenDesign && (
+            <Button variant="ghost" size="sm" onClick={onOpenDesign}>
+              Design system →
+            </Button>
+          )}
+          <span className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-ui-xs font-medium uppercase tracking-widest text-[var(--color-fg-muted)]">
+            Phase 0.1 · Foundation
+          </span>
+        </div>
       </header>
 
       {/* Backend identity */}
