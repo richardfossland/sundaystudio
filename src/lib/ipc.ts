@@ -18,7 +18,10 @@ import type {
   AudioDeviceList,
   AudioSettings,
   LatencyEstimate,
+  LoudnessMeasurement,
+  LoudnessTarget,
   Marker,
+  MasterPresetInfo,
   PresetInfo,
   Project,
   ProjectSnapshot,
@@ -146,6 +149,13 @@ export const project = {
 export const dsp = {
   /** Bundled voice-processing factory presets. */
   presets: () => call<PresetInfo[]>("dsp_presets"),
+  /** "Match to platform" loudness targets (Spotify / Apple / YouTube / EBU). */
+  loudnessTargets: () => call<LoudnessTarget[]>("dsp_loudness_targets"),
+  /** Bundled mastering presets (master chain + platform target). */
+  masterPresets: () => call<MasterPresetInfo[]>("dsp_master_presets"),
+  /** Measure a WAV's loudness (integrated/short/momentary LUFS + true peak). */
+  analyzeFile: (path: string) =>
+    call<LoudnessMeasurement>("dsp_analyze_file", { path }),
 };
 
 /** Bundled namespace for ergonomic imports. */

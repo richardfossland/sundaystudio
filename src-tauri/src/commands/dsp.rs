@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use crate::dsp::chain::{preset_infos, PresetInfo};
 use crate::dsp::loudness::{self, LoudnessMeasurement, LoudnessTarget};
+use crate::dsp::master::{master_preset_infos, MasterPresetInfo};
 use crate::error::{AppError, AppResult};
 
 /// The bundled voice-processing presets (Voice / Bright Voice / Warm Voice /
@@ -24,6 +25,14 @@ pub fn dsp_presets() -> AppResult<Vec<PresetInfo>> {
 #[tauri::command]
 pub fn dsp_loudness_targets() -> AppResult<Vec<LoudnessTarget>> {
     Ok(loudness::loudness_targets())
+}
+
+/// The bundled mastering presets (Conversation Podcast / Sermon / Music-heavy /
+/// Loud & Bright). Each pairs a master chain with the platform target it
+/// normalises to.
+#[tauri::command]
+pub fn dsp_master_presets() -> AppResult<Vec<MasterPresetInfo>> {
+    Ok(master_preset_infos())
 }
 
 /// Measure the loudness (integrated/short/momentary LUFS, range, true & sample

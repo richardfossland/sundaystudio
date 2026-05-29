@@ -11,7 +11,11 @@
 //! [`normalize_clip_safe`](super::loudness::normalize_clip_safe), the limiter
 //! lets us actually *reach* a loud target (-14 LUFS) without clipping.
 
-use super::eq::ParametricEq;
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
+use super::compressor::Compressor;
+use super::eq::{EqBand, EqBandType, ParametricEq};
 use super::limiter::Limiter;
 use super::loudness::{self, LoudnessError, LoudnessTarget, NormalizationReport};
 use super::multiband::MultibandCompressor;
@@ -128,6 +132,160 @@ pub fn master_normalize(
     })
 }
 
+/// A bundled mastering preset: a complete master chain paired with the platform
+/// loudness target it's meant to be normalised to. One-click "make it sound
+/// finished and ship-ready for X".
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MasterPreset {
+    /// Light glue + a presence lift, normalised to Spotify (-14 LUFS).
+    ConversationPodcast,
+    /// Broader dynamics, less compression, normalised to Apple Podcasts (-16).
+    Sermon,
+    /// Preserve dynamics, only light limiting, normalised to Spotify.
+    MusicHeavy,
+    /// Aggressive and bright — loud on purpose (use at your own risk).
+    LoudAndBright,
+}
+
+impl MasterPreset {
+    pub const ALL: [MasterPreset; 4] = [
+        MasterPreset::ConversationPodcast,
+        MasterPreset::Sermon,
+        MasterPreset::MusicHeavy,
+        MasterPreset::LoudAndBright,
+    ];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            MasterPreset::ConversationPodcast => "conversation-podcast",
+            MasterPreset::Sermon => "sermon",
+            MasterPreset::MusicHeavy => "music-heavy",
+            MasterPreset::LoudAndBright => "loud-and-bright",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            MasterPreset::ConversationPodcast => "Conversation Podcast",
+            MasterPreset::Sermon => "Sermon",
+            MasterPreset::MusicHeavy => "Music-heavy",
+            MasterPreset::LoudAndBright => "Loud & Bright",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            MasterPreset::ConversationPodcast => {
+                "Light glue and a presence lift; even, consistent talk. → Spotify -14 LUFS."
+            }
+            MasterPreset::Sermon => {
+                "Keeps the dynamics of a live room; gentle control. → Apple Podcasts -16 LUFS."
+            }
+            MasterPreset::MusicHeavy => {
+                "Preserves dynamics, only catches peaks. For music-forward shows. → Spotify -14."
+            }
+            MasterPreset::LoudAndBright => {
+                "Aggressive and bright — loud on purpose. Signals amateur; use sparingly. → -14."
+            }
+        }
+    }
+
+    /// The platform loudness target this preset normalises to.
+    pub fn target_id(self) -> &'static str {
+        match self {
+            MasterPreset::Sermon => "apple-podcasts",
+            _ => "spotify",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<MasterPreset> {
+        MasterPreset::ALL.into_iter().find(|p| p.id() == id)
+    }
+
+    /// Materialise the preset into a configured (un-prepared) master chain.
+    pub fn build(self) -> MasterChain {
+        let limiter = Limiter::brickwall(-1.0);
+        match self {
+            MasterPreset::ConversationPodcast => MasterChain {
+                eq: ParametricEq::from_bands(&[EqBand::bell(3000.0, 0.9, 1.5)]),
+                multiband: MultibandCompressor::voice(),
+                limiter,
+            },
+            MasterPreset::Sermon => {
+                // Less compression: higher thresholds, lower ratios; slower
+                // limiter release so the room breathes.
+                let mut mb = MultibandCompressor::voice();
+                mb.low = Compressor::voice(-18.0, 1.5);
+                mb.mid = Compressor::voice(-16.0, 1.8);
+                mb.high = Compressor::voice(-18.0, 1.5);
+                let mut limiter = limiter;
+                limiter.release_ms = 160.0; // slower recovery — let the room breathe
+                MasterChain {
+                    eq: ParametricEq::default(),
+                    multiband: mb,
+                    limiter,
+                }
+            }
+            MasterPreset::MusicHeavy => {
+                // Near-transparent glue; rely on the limiter for peaks only.
+                let mut mb = MultibandCompressor::default();
+                mb.low = Compressor::voice(-12.0, 1.3);
+                mb.mid = Compressor::voice(-12.0, 1.3);
+                mb.high = Compressor::voice(-12.0, 1.3);
+                MasterChain {
+                    eq: ParametricEq::default(),
+                    multiband: mb,
+                    limiter,
+                }
+            }
+            MasterPreset::LoudAndBright => {
+                let mut mb = MultibandCompressor::voice();
+                mb.low = Compressor::voice(-26.0, 3.5);
+                mb.mid = Compressor::voice(-24.0, 4.0);
+                mb.high = Compressor::voice(-26.0, 3.5);
+                MasterChain {
+                    eq: ParametricEq::from_bands(&[
+                        EqBand::bell(4000.0, 0.9, 3.0),
+                        EqBand {
+                            enabled: true,
+                            band_type: EqBandType::HighShelf,
+                            freq: 9000.0,
+                            q: 0.707,
+                            gain_db: 3.0,
+                        },
+                    ]),
+                    multiband: mb,
+                    limiter,
+                }
+            }
+        }
+    }
+}
+
+/// Mastering-preset metadata for the UI picker.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../src/lib/bindings/MasterPresetInfo.ts")]
+pub struct MasterPresetInfo {
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    /// The loudness target id this preset normalises to (see `LoudnessTarget`).
+    pub target_id: String,
+}
+
+/// All mastering presets, for `dsp_master_presets`.
+pub fn master_preset_infos() -> Vec<MasterPresetInfo> {
+    MasterPreset::ALL
+        .into_iter()
+        .map(|p| MasterPresetInfo {
+            id: p.id().to_string(),
+            label: p.label().to_string(),
+            description: p.description().to_string(),
+            target_id: p.target_id().to_string(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +331,35 @@ mod tests {
             "achieved {achieved} LUFS, target {}",
             target.integrated_lufs
         );
+    }
+
+    #[test]
+    fn master_presets_are_well_formed_and_build() {
+        let infos = master_preset_infos();
+        assert_eq!(infos.len(), 4);
+        assert!(MasterPreset::from_id("sermon").is_some());
+        assert!(MasterPreset::from_id("nope").is_none());
+        for info in &infos {
+            // Every preset's declared target must resolve to a real target.
+            assert!(
+                target_by_id(&info.target_id).is_some(),
+                "{} -> unknown target {}",
+                info.id,
+                info.target_id
+            );
+        }
+        // Each preset builds a chain that stays finite on a real tone.
+        for p in MasterPreset::ALL {
+            let mut chain = p.build();
+            chain.prepare(SR_F);
+            let mut buf = sine(1000.0, SR_F, 4800);
+            chain.process(&mut buf);
+            assert!(
+                buf.iter().all(|s| s.is_finite()),
+                "{} produced non-finite output",
+                p.label()
+            );
+        }
     }
 
     #[test]

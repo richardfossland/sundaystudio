@@ -67,6 +67,31 @@ this file degrades to "last-used defaults".
 and human-inspectable); failing hard on a corrupt settings file (audio config
 is recoverable — we fall back to safe defaults instead).
 
+## ADR-0012 — Mastering presets pair a chain with a target; loudness surfaces on Diagnostics first (Phase 4.2c)
+
+**Decision.** A mastering preset (Conversation Podcast / Sermon / Music-heavy /
+Loud & Bright) is a `MasterChain` configuration _plus_ the platform loudness
+target it normalises to (`MasterPresetInfo.target_id` → a `LoudnessTarget`).
+Sermon targets Apple Podcasts (-16 LUFS); the rest target Spotify (-14). The
+first UI for all of Phase 4.2 lives on the existing Diagnostics screen: the
+platform targets, the mastering presets, and an "Analyze loudness" button that
+measures the test-tone WAV and shows integrated/short/momentary LUFS + true peak.
+
+**Context.** The plan defines mastering presets as loudness-aware ("…LUFS
+normalize to Spotify"), so the target belongs _in_ the preset, not bolted on at
+export — one click should mean "make this sound finished for X". Surfacing the
+numbers on Diagnostics (rather than building a full Master panel now) keeps the
+delfase honest and verifiable end-to-end with zero new screens: it reuses the
+test-tone path to prove `dsp_analyze_file` works against a real WAV through the
+IPC layer. The dedicated master UI (live meters during playback, the target
+picker that actually applies) lands when the mixer/playback exists.
+
+**Rejected.** A free-floating target selector decoupled from presets (users
+would have to know -14 vs -16 themselves — the preset should encode the
+intent); building the full master panel now (no playback to meter yet — it would
+be UI without a live signal, the kind of unverified surface ADR-0006 warns
+against).
+
 ## ADR-0011 — Master chain: look-ahead brick-wall limiter, LR4 multiband, glue-then-gain-then-limit (Phase 4.2b)
 
 **Decision.** The master chain is EQ → 3-band compressor → brick-wall limiter.

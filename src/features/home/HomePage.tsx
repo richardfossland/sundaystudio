@@ -5,8 +5,10 @@ import {
   ArrowLeft,
   CheckCircle2,
   CircleDot,
+  Gauge,
   Loader2,
   Mic,
+  Radio,
   Sliders,
   Volume2,
 } from "lucide-react";
@@ -14,7 +16,16 @@ import {
 import { Brand } from "@/components/Brand";
 import { Button } from "@/components/ui/Button";
 import { ipc } from "@/lib/ipc";
-import type { AudioDevice, ToneResult } from "@/lib/bindings";
+import type {
+  AudioDevice,
+  LoudnessMeasurement,
+  ToneResult,
+} from "@/lib/bindings";
+
+/** Format a LUFS/LU/dB value (or `—` when undefined / silent). */
+function fmtDb(value: number | null, unit: string): string {
+  return value === null ? "—" : `${value.toFixed(1)} ${unit}`;
+}
 
 /**
  * Diagnostics screen — the original "Hello SundayStudio" smoke checks, kept as
@@ -31,20 +42,47 @@ export function HomePage({ onBack }: { onBack?: () => void }) {
     queryKey: ["dsp_presets"],
     queryFn: ipc.dsp.presets,
   });
+  const targets = useQuery({
+    queryKey: ["dsp_loudness_targets"],
+    queryFn: ipc.dsp.loudnessTargets,
+  });
+  const masterPresets = useQuery({
+    queryKey: ["dsp_master_presets"],
+    queryFn: ipc.dsp.masterPresets,
+  });
 
   const [tone, setTone] = useState<ToneResult | null>(null);
   const [toneError, setToneError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
 
+  const [loudness, setLoudness] = useState<LoudnessMeasurement | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+
   async function recordTestTone() {
     setRecording(true);
     setToneError(null);
+    setLoudness(null);
+    setAnalyzeError(null);
     try {
       setTone(await ipc.audio.recordTestTone());
     } catch (err) {
       setToneError(err instanceof Error ? err.message : String(err));
     } finally {
       setRecording(false);
+    }
+  }
+
+  async function analyzeTone() {
+    if (!tone) return;
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    try {
+      setLoudness(await ipc.dsp.analyzeFile(tone.path));
+    } catch (err) {
+      setAnalyzeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAnalyzing(false);
     }
   }
 
@@ -169,6 +207,123 @@ export function HomePage({ onBack }: { onBack?: () => void }) {
             <span className="break-all">{toneError}</span>
           </div>
         )}
+
+        {/* Loudness analysis of the written tone (EBU R128, Phase 4.2) */}
+        {tone && (
+          <div className="mt-4 border-t border-[var(--color-border)] pt-4">
+            <Button
+              variant="surface"
+              size="sm"
+              onClick={analyzeTone}
+              disabled={analyzing}
+            >
+              {analyzing ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <Gauge size={15} />
+              )}
+              {analyzing ? "Measuring…" : "Analyze loudness"}
+            </Button>
+
+            {loudness && (
+              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3">
+                <Metric
+                  label="Integrated"
+                  value={fmtDb(loudness.integrated_lufs, "LUFS")}
+                />
+                <Metric
+                  label="Short-term"
+                  value={fmtDb(loudness.short_term_lufs, "LUFS")}
+                />
+                <Metric
+                  label="Momentary"
+                  value={fmtDb(loudness.momentary_lufs, "LUFS")}
+                />
+                <Metric
+                  label="Range"
+                  value={fmtDb(loudness.loudness_range_lu, "LU")}
+                />
+                <Metric
+                  label="True peak"
+                  value={fmtDb(loudness.true_peak_dbtp, "dBTP")}
+                />
+                <Metric
+                  label="Sample peak"
+                  value={fmtDb(loudness.sample_peak_dbfs, "dBFS")}
+                />
+              </dl>
+            )}
+            {analyzeError && (
+              <div className="mt-3 flex items-start gap-2 text-ui-xs text-[var(--color-danger)]">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                <span className="break-all">{analyzeError}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* Loudness targets — "Match to platform" (Phase 4.2) */}
+      <section className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">
+        <div className="mb-1 flex items-center gap-2">
+          <Gauge size={15} className="text-[var(--color-fg-muted)]" />
+          <h2 className="text-ui-md font-semibold">Loudness targets</h2>
+        </div>
+        <p className="mb-4 text-ui-sm text-[var(--color-fg-muted)]">
+          Where each platform normalises your show. Master to the target and it
+          plays back at the level you intended — no louder, no quieter.
+        </p>
+        {targets.isSuccess ? (
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {targets.data.map((t) => (
+              <li
+                key={t.id}
+                className="rounded-[var(--radius-md)] bg-[var(--color-bg-surface)] p-3"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-ui-sm font-medium">{t.label}</span>
+                  <span className="font-mono text-ui-xs text-[var(--color-accent)]">
+                    {t.integrated_lufs} LUFS
+                  </span>
+                </div>
+                <div className="mt-0.5 text-ui-xs text-[var(--color-fg-muted)]">
+                  {t.description}
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <Muted>Targets load when running in the SundayStudio app.</Muted>
+        )}
+      </section>
+
+      {/* Mastering presets (Phase 4.2) */}
+      <section className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">
+        <div className="mb-1 flex items-center gap-2">
+          <Radio size={15} className="text-[var(--color-fg-muted)]" />
+          <h2 className="text-ui-md font-semibold">Mastering presets</h2>
+        </div>
+        <p className="mb-4 text-ui-sm text-[var(--color-fg-muted)]">
+          One-click master chains (EQ · 3-band compressor · brick-wall limiter)
+          paired with a loudness target. They run on the final mix at export.
+        </p>
+        {masterPresets.isSuccess ? (
+          <ul className="grid gap-2 sm:grid-cols-2">
+            {masterPresets.data.map((p) => (
+              <li
+                key={p.id}
+                className="rounded-[var(--radius-md)] bg-[var(--color-bg-surface)] p-3"
+              >
+                <div className="text-ui-sm font-medium">{p.label}</div>
+                <div className="mt-0.5 text-ui-xs text-[var(--color-fg-muted)]">
+                  {p.description}
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <Muted>Presets load when running in the SundayStudio app.</Muted>
+        )}
       </section>
 
       {/* Bundled voice presets (DSP engine, Phase 4.1) */}
@@ -275,6 +430,17 @@ function DeviceColumn({
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-[10px] font-medium uppercase tracking-wider text-[var(--color-fg-muted)]">
+        {label}
+      </dt>
+      <dd className="font-mono text-ui-sm">{value}</dd>
     </div>
   );
 }
