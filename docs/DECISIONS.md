@@ -47,6 +47,26 @@ Our entire wedge is being the _simplest_ podcast tool. Bundling a small,
 excellent set of voice/master effects keeps the surface small and the result
 predictable. Plugin hosting is a v2 question, only if users demand it.
 
+## ADR-0005 — App-level audio settings + a-priori latency estimate (Phase 1.1)
+
+**Decision.** Audio settings (input/output device, sample rate, buffer size)
+persist to a single JSON file in the app config dir, loaded/saved through pure,
+unit-tested functions. The settings screen shows an _estimated_ round-trip
+latency computed from buffer size and sample rate (`2 × buffer/rate + 2 ms`
+driver allowance), colour-coded green/yellow/red.
+
+**Context.** We need device selection and a latency figure before the
+real-time engine exists. A pure estimate is honest for a settings screen shown
+before any stream is open, and keeps Phase 1.1 fully testable with no hardware.
+The _measured_ latency (queried from the live cpal stream) replaces the
+estimate in Phase 1.3. Settings live at app level for now; Phase 2.1 moves the
+active selection into the project (so reopening restores its interface) and
+this file degrades to "last-used defaults".
+
+**Rejected.** Storing in SQLite (no DB until Phase 2.1; a JSON file is simpler
+and human-inspectable); failing hard on a corrupt settings file (audio config
+is recoverable — we fall back to safe defaults instead).
+
 ## ADR-0004 — AI is isolated from the audio engine, opt-in, Pro-gated
 
 **Decision.** Every AI feature is HTTP-based (Anthropic for analysis/suggestions,

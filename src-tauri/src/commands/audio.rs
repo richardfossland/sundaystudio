@@ -6,8 +6,10 @@
 //! exercise the device layer and the file layer before Phase 1 builds the
 //! real-time recording engine on top.
 
-use crate::audio::{devices, tone};
-use crate::error::AppResult;
+use tauri::{AppHandle, Manager};
+
+use crate::audio::{devices, settings, tone};
+use crate::error::{AppError, AppResult};
 
 /// Enumerate input and output audio devices on the default host.
 #[tauri::command]
@@ -21,6 +23,38 @@ pub fn audio_devices() -> AppResult<devices::AudioDeviceList> {
 pub fn audio_record_test_tone() -> AppResult<tone::ToneResult> {
     let path = tone::default_tone_path();
     tone::write_test_tone(&path, 48_000, 440.0, 1000)
+}
+
+/// Resolve the app config dir, mapping a missing-dir error into our domain type.
+fn config_dir(app: &AppHandle) -> AppResult<std::path::PathBuf> {
+    app.path()
+        .app_config_dir()
+        .map_err(|e| AppError::Internal(format!("resolving config dir: {e}")))
+}
+
+/// Load the persisted audio settings (defaults on first run / corrupt file).
+#[tauri::command]
+pub fn audio_get_settings(app: AppHandle) -> AppResult<settings::AudioSettings> {
+    let path = settings::settings_path(&config_dir(&app)?);
+    Ok(settings::load(&path))
+}
+
+/// Persist audio settings after validating them.
+#[tauri::command]
+pub fn audio_set_settings(app: AppHandle, new_settings: settings::AudioSettings) -> AppResult<()> {
+    let path = settings::settings_path(&config_dir(&app)?);
+    settings::save(&path, &new_settings)
+}
+
+/// Estimate round-trip monitoring latency for a sample-rate / buffer choice.
+/// Pure — no device or app state needed, so the settings UI can call it live as
+/// the user drags the buffer selector.
+#[tauri::command]
+pub fn audio_latency_estimate(
+    sample_rate: u32,
+    buffer_size: u32,
+) -> AppResult<settings::LatencyEstimate> {
+    Ok(settings::estimate_latency(sample_rate, buffer_size))
 }
 
 #[cfg(test)]

@@ -11,6 +11,9 @@ export type { AppInfo } from "./AppInfo";
 export type { AudioDevice } from "./AudioDevice";
 export type { AudioDeviceList } from "./AudioDeviceList";
 export type { ToneResult } from "./ToneResult";
+export type { AudioSettings } from "./AudioSettings";
+export type { LatencyEstimate } from "./LatencyEstimate";
+export type { LatencyZone } from "./LatencyZone";
 
 /** Error shape returned by every Tauri command (see error.rs).
  *  Keep this union in sync with `AppError::code()` in Rust. */

@@ -6,6 +6,7 @@ import {
   CircleDot,
   Loader2,
   Mic,
+  Settings,
   Volume2,
 } from "lucide-react";
 
@@ -25,7 +26,13 @@ import type { AudioDevice, ToneResult } from "@/lib/bindings";
  * This is deliberately a flat status page, not the eventual app. The record
  * surface, mixer, editor, jingle studio and export all arrive in later phases.
  */
-export function HomePage({ onOpenDesign }: { onOpenDesign?: () => void }) {
+export function HomePage({
+  onOpenDesign,
+  onOpenSettings,
+}: {
+  onOpenDesign?: () => void;
+  onOpenSettings?: () => void;
+}) {
   const info = useQuery({ queryKey: ["app_info"], queryFn: ipc.app.info });
   const devices = useQuery({
     queryKey: ["audio_devices"],
@@ -56,14 +63,22 @@ export function HomePage({ onOpenDesign }: { onOpenDesign?: () => void }) {
       <header className="flex items-center justify-between">
         <Brand size={32} />
         <div className="flex items-center gap-2">
+          {onOpenSettings && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onOpenSettings}
+              aria-label="Audio settings"
+            >
+              <Settings size={15} />
+              Audio
+            </Button>
+          )}
           {onOpenDesign && (
             <Button variant="ghost" size="sm" onClick={onOpenDesign}>
               Design system →
             </Button>
           )}
-          <span className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-ui-xs font-medium uppercase tracking-widest text-[var(--color-fg-muted)]">
-            Phase 0.1 · Foundation
-          </span>
         </div>
       </header>
 

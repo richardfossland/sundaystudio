@@ -16,6 +16,8 @@ import type {
   AppError,
   AppInfo,
   AudioDeviceList,
+  AudioSettings,
+  LatencyEstimate,
   ToneResult,
 } from "./bindings";
 
@@ -70,6 +72,17 @@ export const audio = {
   devices: () => call<AudioDeviceList>("audio_devices"),
   /** Write a 1-second 440 Hz sine WAV to the OS temp dir (hound smoke test). */
   recordTestTone: () => call<ToneResult>("audio_record_test_tone"),
+  /** Load persisted audio settings (defaults on first run). */
+  getSettings: () => call<AudioSettings>("audio_get_settings"),
+  /** Persist audio settings (validated backend-side). */
+  setSettings: (newSettings: AudioSettings) =>
+    call<void>("audio_set_settings", { newSettings }),
+  /** Estimate round-trip monitoring latency for a sample-rate/buffer choice. */
+  latencyEstimate: (sampleRate: number, bufferSize: number) =>
+    call<LatencyEstimate>("audio_latency_estimate", {
+      sampleRate,
+      bufferSize,
+    }),
 };
 
 /** Bundled namespace for ergonomic imports. */

@@ -46,6 +46,9 @@ pub fn run() {
             commands::app::app_info,
             commands::audio::audio_devices,
             commands::audio::audio_record_test_tone,
+            commands::audio::audio_get_settings,
+            commands::audio::audio_set_settings,
+            commands::audio::audio_latency_estimate,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -2,23 +2,30 @@ import { useState } from "react";
 
 import { HomePage } from "@/features/home/HomePage";
 import { DesignPage } from "@/features/design/DesignPage";
+import { SettingsPage } from "@/features/settings/SettingsPage";
 
-export type Route = "home" | "design";
+export type Route = "home" | "design" | "settings";
 
 /**
- * Phase 0.1/0.3 shell. Two routes for now — the home smoke screen and the
- * living design system. The real navigation (record, edit, jingle, export,
- * settings) arrives with those features in later phases.
+ * Phase 0/1 shell. Home smoke screen, the living design system, and the audio
+ * settings. The full navigation (record, edit, jingle, export) arrives with
+ * those features in later phases.
  */
 function App() {
   const [route, setRoute] = useState<Route>("home");
+  const back = () => setRoute("home");
 
   return (
     <div className="min-h-screen bg-[var(--color-bg)] text-[var(--color-fg)]">
       {route === "design" ? (
-        <DesignPage onBack={() => setRoute("home")} />
+        <DesignPage onBack={back} />
+      ) : route === "settings" ? (
+        <SettingsPage onBack={back} />
       ) : (
-        <HomePage onOpenDesign={() => setRoute("design")} />
+        <HomePage
+          onOpenDesign={() => setRoute("design")}
+          onOpenSettings={() => setRoute("settings")}
+        />
       )}
     </div>
   );
