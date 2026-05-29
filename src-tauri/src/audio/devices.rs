@@ -64,7 +64,9 @@ impl Direction {
 /// to report a name or configs is reported with what we could read (defaults of
 /// 0 channels / empty rates) rather than aborting the whole enumeration.
 fn summarise(device: &cpal::Device, dir: Direction, is_default: bool) -> AudioDevice {
-    let name = device.name().unwrap_or_else(|_| "Unknown device".to_string());
+    let name = device
+        .name()
+        .unwrap_or_else(|_| "Unknown device".to_string());
 
     // Walk every supported config range, tracking the widest channel count and
     // the union of supported sample-rate ranges.
@@ -111,12 +113,8 @@ fn summarise(device: &cpal::Device, dir: Direction, is_default: bool) -> AudioDe
 pub fn enumerate() -> AppResult<AudioDeviceList> {
     let host = cpal::default_host();
 
-    let default_in = host
-        .default_input_device()
-        .and_then(|d| d.name().ok());
-    let default_out = host
-        .default_output_device()
-        .and_then(|d| d.name().ok());
+    let default_in = host.default_input_device().and_then(|d| d.name().ok());
+    let default_out = host.default_output_device().and_then(|d| d.name().ok());
 
     let inputs = host
         .input_devices()
