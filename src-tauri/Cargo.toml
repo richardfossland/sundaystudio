@@ -38,6 +38,13 @@ hound = "3.5"
 # callback to the writer thread without locks or allocation (Phase 1.2).
 rtrb = "0.3"
 
+# Loudness measurement (Phase 4.2) — EBU R128 / ITU-R BS.1770. A pure-Rust port
+# of libebur128 (no C toolchain), so it compiles in the default test gate. Gives
+# us integrated/short-term/momentary LUFS, loudness range and true-peak — the
+# numbers podcast platforms normalise to. Kept un-gated on purpose: the master
+# loudness logic is too important to live outside `cargo test`.
+ebur128 = "0.1"
+
 # Project storage (Phase 2.1) — local-first SQLite via sqlx. Runtime-checked
 # queries (no DATABASE_URL / .sqlx needed at compile time).
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }

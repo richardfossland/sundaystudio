@@ -67,6 +67,38 @@ this file degrades to "last-used defaults".
 and human-inspectable); failing hard on a corrupt settings file (audio config
 is recoverable — we fall back to safe defaults instead).
 
+## ADR-0010 — Loudness via the `ebur128` crate, normalisation is clip-safe first (Phase 4.2a)
+
+**Decision.** LUFS / true-peak measurement uses the `ebur128` crate (a pure-Rust
+port of `libebur128`) rather than a hand-rolled K-weighting + gating + true-peak
+oversampler. It is added as a plain dependency — _not_ feature-gated — so the
+loudness logic runs in the default `cargo test` gate. Non-finite results (the
+`-inf` ebur128 returns for silence) are mapped to `Option<f32>` so the IPC types
+are `number | null` and never `NaN`. The first normalisation primitive
+(`normalize_clip_safe`) applies a single gain toward the platform's integrated
+target but never beyond its true-peak ceiling: when the target is unreachable
+without clipping it gets as loud as safely possible and flags `gain_capped_by_peak`
+instead of distorting. A brick-wall limiter (Phase 4.2b) is what removes that cap.
+
+**Context.** The plan's acceptance test is "measurements match reference tools
+(r128x, `ffmpeg -af ebur128`)". A faithful port of the reference C library is the
+lowest-risk way to pass that — getting the K-weighting filter, the −70/−10 LUFS
+gating and the 4× true-peak oversampling subtly wrong by hand is exactly the kind
+of bug that survives casual testing. The crate is pure Rust with no C toolchain,
+so it costs nothing in CI portability and earns its place inside the test gate
+(loudness is too load-bearing to verify outside `cargo test`). Tests are signal
+_properties_ per ADR-0009: +6 dB amplitude ⇒ +6 LUFS; a full-scale sine peaks
+near 0 dBTP; silence reads `None` and still serialises; normalisation lands within
+0.5 LU of target when peaks allow and stays clip-safe (flagging the cap) when they
+don't.
+
+**Rejected.** Hand-rolling BS.1770 (correctness risk for no real benefit — the
+plan explicitly allows the crate); feature-gating it (would push the most
+safety-critical numbers out of the default test gate); a limiter-first
+normaliser (a limiter that hasn't been built and verified would be doing the
+loudest, most audible work blind — gain-only is honest and provably clip-free,
+and names exactly what 4.2b must add).
+
 ## ADR-0009 — DSP effects tested by signal properties, not byte goldens (Phase 4.1)
 
 **Decision.** The five bundled voice effects (gate, 4-band parametric EQ,

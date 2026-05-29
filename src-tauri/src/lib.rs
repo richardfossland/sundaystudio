@@ -65,6 +65,8 @@ pub fn run() {
             commands::project::marker_add,
             commands::project::marker_delete,
             commands::dsp::dsp_presets,
+            commands::dsp::dsp_loudness_targets,
+            commands::dsp::dsp_analyze_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

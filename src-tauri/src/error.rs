@@ -85,5 +85,11 @@ impl From<sqlx::migrate::MigrateError> for AppError {
     }
 }
 
+impl From<ebur128::Error> for AppError {
+    fn from(e: ebur128::Error) -> Self {
+        AppError::Audio(format!("loudness: {e}"))
+    }
+}
+
 /// Convenience alias for the project.
 pub type AppResult<T> = Result<T, AppError>;

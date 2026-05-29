@@ -18,6 +18,7 @@ pub mod compressor;
 pub mod deesser;
 pub mod eq;
 pub mod gate;
+pub mod loudness;
 pub mod saturator;
 
 /// In-place, real-time-safe audio processor over a mono block.
