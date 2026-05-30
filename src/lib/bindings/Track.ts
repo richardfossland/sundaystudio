@@ -15,4 +15,9 @@ pan: number, mute: boolean, solo: boolean, armed: boolean,
 /**
  * Order within the project's track list.
  */
-position: number, };
+position: number, 
+/**
+ * Voice-processing preset id (dsp::chain::Preset), or None for no processing.
+ * Applied per track at export time.
+ */
+voice_preset: string | null, };

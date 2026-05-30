@@ -138,12 +138,13 @@ pub async fn add_track_with(
         solo: false,
         armed: false,
         position,
+        voice_preset: None,
     };
     sqlx::query(
         "INSERT INTO track
            (id, project_id, name, color, input_assignment, output_assignment,
-            gain_db, pan, mute, solo, armed, position)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            gain_db, pan, mute, solo, armed, position, voice_preset)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&track.id)
     .bind(&track.project_id)
@@ -157,6 +158,7 @@ pub async fn add_track_with(
     .bind(track.solo)
     .bind(track.armed)
     .bind(track.position)
+    .bind(&track.voice_preset)
     .execute(pool)
     .await?;
     Ok(track)
@@ -178,7 +180,8 @@ pub async fn update_track(pool: &SqlitePool, t: &Track) -> AppResult<()> {
     let affected = sqlx::query(
         "UPDATE track SET
            name = ?, color = ?, input_assignment = ?, output_assignment = ?,
-           gain_db = ?, pan = ?, mute = ?, solo = ?, armed = ?, position = ?
+           gain_db = ?, pan = ?, mute = ?, solo = ?, armed = ?, position = ?,
+           voice_preset = ?
          WHERE id = ?",
     )
     .bind(&t.name)
@@ -191,6 +194,7 @@ pub async fn update_track(pool: &SqlitePool, t: &Track) -> AppResult<()> {
     .bind(t.solo)
     .bind(t.armed)
     .bind(t.position)
+    .bind(&t.voice_preset)
     .bind(&t.id)
     .execute(pool)
     .await?
@@ -483,12 +487,16 @@ mod tests {
         edited.mute = true;
         edited.gain_db = -6.0;
         edited.input_assignment = Some(1);
+        edited.voice_preset = Some("broadcast".into());
         update_track(&pool, &edited).await.unwrap();
 
         let reloaded = list_tracks(&pool, &p.id).await.unwrap();
         assert!(reloaded[0].mute);
         assert_eq!(reloaded[0].gain_db, -6.0);
         assert_eq!(reloaded[0].input_assignment, Some(1));
+        assert_eq!(reloaded[0].voice_preset.as_deref(), Some("broadcast"));
+        // New tracks default to no processing.
+        assert_eq!(reloaded[1].voice_preset, None);
     }
 
     #[tokio::test]
@@ -508,6 +516,7 @@ mod tests {
             solo: false,
             armed: false,
             position: 0,
+            voice_preset: None,
         };
         assert!(update_track(&pool, &ghost).await.is_err());
     }

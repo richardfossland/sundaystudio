@@ -17,8 +17,10 @@ use tauri::State;
 use ts_rs::TS;
 
 use crate::commands::project::{current, ProjectState};
+use crate::dsp::chain::Preset as VoicePreset;
 use crate::dsp::loudness::{self, LoudnessTarget, NormalizationReport};
 use crate::dsp::master::MasterPreset;
+use crate::dsp::Effect;
 use crate::error::{AppError, AppResult};
 use crate::export::format::{self, ExportFormat, ExportPresetInfo};
 use crate::export::render::{self, MixSource, PlacedClip};
@@ -39,6 +41,8 @@ struct ClipPlan {
 struct TrackPlan {
     gain_db: f32,
     mute: bool,
+    /// Voice-processing preset id to apply to the track before mixing (if any).
+    voice_preset: Option<String>,
     clips: Vec<ClipPlan>,
 }
 
@@ -130,6 +134,7 @@ pub async fn export_render(
             plans.push(TrackPlan {
                 gain_db: t.gain_db as f32,
                 mute: t.mute || !active,
+                voice_preset: t.voice_preset.clone(),
                 clips,
             });
         }
@@ -201,7 +206,14 @@ fn render_and_write(
             );
             clips.push(PlacedClip { position_ms: clip.position_ms, samples });
         }
-        let track_buf = render::assemble_timeline(&clips, rate);
+        let mut track_buf = render::assemble_timeline(&clips, rate);
+        // Apply the track's bundled voice chain (gate → EQ → de-ess → comp → sat)
+        // to the assembled timeline before it hits the mix bus.
+        if let Some(preset) = plan.voice_preset.as_deref().and_then(VoicePreset::from_id) {
+            let mut chain = preset.build();
+            chain.prepare(rate as f32);
+            chain.process(&mut track_buf);
+        }
         sources.push(MixSource {
             samples: track_buf,
             gain_db: plan.gain_db,

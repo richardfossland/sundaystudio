@@ -41,6 +41,9 @@ pub struct Track {
     pub armed: bool,
     /// Order within the project's track list.
     pub position: i32,
+    /// Voice-processing preset id (dsp::chain::Preset), or None for no processing.
+    /// Applied per track at export time.
+    pub voice_preset: Option<String>,
 }
 
 /// A raw recording pass. The WAVs live at `takes/{id}/{source_track}.wav`.

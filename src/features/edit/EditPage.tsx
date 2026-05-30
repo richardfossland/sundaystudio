@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   AlertTriangle,
@@ -45,7 +46,7 @@ import {
 import { ipc } from "@/lib/ipc";
 import { useSession } from "@/lib/session";
 import { formatTimecode } from "@/lib/timeline";
-import type { Region } from "@/lib/bindings";
+import type { Region, Track } from "@/lib/bindings";
 
 import { useEditor } from "./editorStore";
 import { LANE_H, RULER_H, Timeline } from "./Timeline";
@@ -338,6 +339,25 @@ export function EditPage({
     [run, select],
   );
 
+  // Bundled voice-processing presets, for the per-track FX picker.
+  const voicePresets = useQuery({
+    queryKey: ["dsp_presets"],
+    queryFn: () => ipc.dsp.presets(),
+    staleTime: Infinity,
+  });
+
+  const setTrackVoicePreset = useCallback(
+    async (track: Track, presetId: string | null) => {
+      try {
+        await ipc.project.updateTrack({ ...track, voice_preset: presetId });
+        setSnapshot(await ipc.project.snapshot());
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [setSnapshot],
+  );
+
   // Keyboard: edit ops + clipboard + undo/redo (skip while typing in a field).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -590,14 +610,31 @@ export function EditPage({
             {tracks.map((t) => (
               <div
                 key={t.id}
-                className="flex items-center gap-2 border-b border-[var(--color-border)]/60 px-3"
+                className="flex flex-col justify-center gap-1 border-b border-[var(--color-border)]/60 px-3"
                 style={{ height: LANE_H }}
               >
-                <span
-                  className="size-2.5 shrink-0 rounded-full"
-                  style={{ background: t.color }}
-                />
-                <span className="truncate text-ui-sm">{t.name}</span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{ background: t.color }}
+                  />
+                  <span className="truncate text-ui-sm">{t.name}</span>
+                </div>
+                <select
+                  value={t.voice_preset ?? ""}
+                  onChange={(e) =>
+                    setTrackVoicePreset(t, e.target.value || null)
+                  }
+                  title="Voice processing applied to this track on export"
+                  className="w-full rounded-[var(--radius-xs)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-1.5 py-0.5 text-[11px] text-[var(--color-fg-muted)]"
+                >
+                  <option value="">No FX</option>
+                  {(voicePresets.data ?? []).map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
               </div>
             ))}
           </div>
