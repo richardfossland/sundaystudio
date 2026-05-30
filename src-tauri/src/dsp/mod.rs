@@ -23,6 +23,7 @@ pub mod loudness;
 pub mod master;
 pub mod multiband;
 pub mod saturator;
+pub mod silence;
 
 /// In-place, real-time-safe audio processor over a mono block.
 pub trait Effect {

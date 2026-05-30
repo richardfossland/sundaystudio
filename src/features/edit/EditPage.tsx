@@ -7,6 +7,7 @@ import {
   ClipboardPaste,
   Combine,
   Copy,
+  Eraser,
   FilePlus2,
   FoldHorizontal,
   Loader2,
@@ -35,6 +36,7 @@ import {
   mergeOps,
   overlapWithPrev,
   pasteRegion,
+  removeSilencesOps,
   rippleDeleteOps,
   splitRegion,
   type EditCommand,
@@ -54,6 +56,9 @@ const GAIN_MAX = 24;
 const GAIN_STEP = 1;
 /** Keep the undo history bounded (the plan's cap). */
 const HISTORY_CAP = 200;
+/** Silence-detection defaults: conservative, so it never cuts into speech. */
+const SILENCE_DB = -50;
+const MIN_SILENCE_MS = 500;
 
 /**
  * The waveform timeline editor. Loads the open project's regions, draws each
@@ -92,7 +97,9 @@ export function EditPage({
   const [future, setFuture] = useState<EditCommand[]>([]);
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   // The copied clip lives in a ref (no re-render on copy); a flag drives the UI.
   const clipboardRef = useRef<Region | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
@@ -288,6 +295,48 @@ export function EditPage({
     run({ label: "Paste", ops: [{ kind: "create", region: pasted }] });
     select(pasted.id);
   }, [run, select, playheadMs]);
+
+  const removeSilence = useCallback(
+    async (id: string) => {
+      const target = regionsRef.current.find((r) => r.id === id);
+      if (!target) return;
+      setError(null);
+      setInfo(null);
+      setAnalyzing(true);
+      try {
+        const spans = await ipc.edit.analyzeSilence(
+          target.take_id,
+          target.source_track_id,
+          SILENCE_DB,
+          MIN_SILENCE_MS,
+        );
+        const ops = removeSilencesOps(target, spans, () => crypto.randomUUID());
+        if (ops.length === 0) {
+          setInfo("No silences over 0.5s found in this clip.");
+          return;
+        }
+        const before = target.end_in_take_ms - target.start_in_take_ms;
+        const keptTotal = ops.reduce(
+          (a, o) =>
+            o.kind === "create"
+              ? a + (o.region.end_in_take_ms - o.region.start_in_take_ms)
+              : a,
+          0,
+        );
+        const clips = ops.filter((o) => o.kind === "create").length;
+        run({ label: "Remove silences", ops });
+        select(null);
+        setInfo(
+          `Removed silence — ${((before - keptTotal) / 1000).toFixed(1)}s shorter, now ${clips} clip(s).`,
+        );
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setAnalyzing(false);
+      }
+    },
+    [run, select],
+  );
 
   // Keyboard: edit ops + clipboard + undo/redo (skip while typing in a field).
   useEffect(() => {
@@ -516,6 +565,12 @@ export function EditPage({
           <span className="break-all">{error}</span>
         </div>
       )}
+      {info && (
+        <div className="flex items-start gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-surface)] px-5 py-2 text-ui-xs text-[var(--color-fg-muted)]">
+          <Eraser size={14} className="mt-0.5 shrink-0" />
+          <span>{info}</span>
+        </div>
+      )}
 
       {/* Body */}
       {loading ? (
@@ -596,6 +651,20 @@ export function EditPage({
             >
               <Blend size={14} />
               Crossfade
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => removeSilence(selected.id)}
+              disabled={analyzing}
+              title="Detect and remove silent gaps in this clip"
+            >
+              {analyzing ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Eraser size={14} />
+              )}
+              Remove silence
             </Button>
 
             {/* Per-clip gain */}

@@ -178,6 +178,77 @@ export function crossfadeOps(
   ];
 }
 
+/** A take-relative silent span (mirrors the backend SilenceSpan). */
+export interface Span {
+  start_ms: number;
+  end_ms: number;
+}
+
+/** The kept (non-silent) take-time spans of a region after removing `silences`,
+ *  clipped to the region's window. Pure — drives both the preview and the ops. */
+export function keptSpans(region: Region, silences: Span[]): Span[] {
+  const s0 = region.start_in_take_ms;
+  const e0 = region.end_in_take_ms;
+  const sil = silences
+    .map((s) => ({
+      start_ms: Math.max(s0, s.start_ms),
+      end_ms: Math.min(e0, s.end_ms),
+    }))
+    .filter((s) => s.end_ms > s.start_ms)
+    .sort((a, b) => a.start_ms - b.start_ms);
+
+  const kept: Span[] = [];
+  let cursor = s0;
+  for (const s of sil) {
+    if (s.start_ms > cursor)
+      kept.push({ start_ms: cursor, end_ms: s.start_ms });
+    cursor = Math.max(cursor, s.end_ms);
+  }
+  if (cursor < e0) kept.push({ start_ms: cursor, end_ms: e0 });
+  return kept;
+}
+
+/**
+ * Ops to remove the silent spans from a region: replace it with one clip per
+ * kept span, ripple-packed from the region's position so there are no gaps. The
+ * original outer fades are preserved on the first/last clip; inner cuts get a
+ * short anti-click fade. Returns [] when there's nothing silent to remove.
+ */
+export function removeSilencesOps(
+  region: Region,
+  silences: Span[],
+  mintId: () => string,
+): PrimOp[] {
+  const kept = keptSpans(region, silences);
+  // Nothing silent inside the window → leave the clip untouched.
+  if (
+    kept.length === 1 &&
+    kept[0].start_ms === region.start_in_take_ms &&
+    kept[0].end_ms === region.end_in_take_ms
+  ) {
+    return [];
+  }
+
+  const ops: PrimOp[] = [{ kind: "delete", region }];
+  let pos = region.position_in_timeline_ms;
+  kept.forEach((k, i) => {
+    ops.push({
+      kind: "create",
+      region: {
+        ...region,
+        id: mintId(),
+        start_in_take_ms: k.start_ms,
+        end_in_take_ms: k.end_ms,
+        position_in_timeline_ms: pos,
+        fade_in_ms: i === 0 ? region.fade_in_ms : CUT_FADE_MS,
+        fade_out_ms: i === kept.length - 1 ? region.fade_out_ms : CUT_FADE_MS,
+      },
+    });
+    pos += k.end_ms - k.start_ms;
+  });
+  return ops;
+}
+
 /** A pasted copy of a clip: same source/trim/fades/gain, new id + position. */
 export function pasteRegion(
   clip: Region,

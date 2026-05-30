@@ -16,7 +16,9 @@ use tauri::State;
 
 use crate::audio::peaks::{self, WaveformPeaks};
 use crate::commands::project::{current, ProjectState};
+use crate::dsp::silence::{self, SilenceSpan};
 use crate::error::{AppError, AppResult};
+use crate::export::render::read_wav_mono;
 use crate::project::model::{Region, TimelineSnapshot};
 use crate::project::{scast, store};
 
@@ -87,6 +89,41 @@ pub async fn region_add(
         },
     )
     .await
+}
+
+/// Detect silent gaps in a take track's audio (take-relative ms), for the editor
+/// to trim. `threshold_db` is dBFS (default ≈ −50), `min_silence_ms` the shortest
+/// gap to report (default ≈ 500). File IO + scan run on a blocking thread.
+#[tauri::command]
+pub async fn analyze_silence(
+    state: State<'_, ProjectState>,
+    take_id: String,
+    source_track_id: String,
+    threshold_db: f64,
+    min_silence_ms: f64,
+) -> AppResult<Vec<SilenceSpan>> {
+    let wav = {
+        let guard = state.current.lock().await;
+        let op = current(&guard)?;
+        scast::take_dir(&op.scast_dir, &take_id).join(format!("{source_track_id}.wav"))
+    };
+    if !wav.exists() {
+        return Err(AppError::NotFound {
+            entity: "take audio",
+            id: source_track_id,
+        });
+    }
+    tokio::task::spawn_blocking(move || {
+        let (samples, rate) = read_wav_mono(&wav).map_err(AppError::Audio)?;
+        Ok(silence::detect_silences(
+            &samples,
+            rate,
+            threshold_db as f32,
+            min_silence_ms,
+        ))
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("silence scan failed: {e}")))?
 }
 
 /// Insert a region with a caller-supplied id. Used by edits like split and

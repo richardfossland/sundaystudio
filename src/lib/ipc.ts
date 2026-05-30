@@ -29,6 +29,7 @@ import type {
   ProjectSnapshot,
   RecentProject,
   Region,
+  SilenceSpan,
   TemplateInfo,
   TimelineSnapshot,
   ToneResult,
@@ -171,6 +172,19 @@ export const edit = {
   /** A take track's waveform overview (computed + cached on first request). */
   peaks: (takeId: string, sourceTrackId: string) =>
     call<WaveformPeaks>("audio_peaks", { takeId, sourceTrackId }),
+  /** Detect silent gaps (take-relative ms) in a take track for trimming. */
+  analyzeSilence: (
+    takeId: string,
+    sourceTrackId: string,
+    thresholdDb: number,
+    minSilenceMs: number,
+  ) =>
+    call<SilenceSpan[]>("analyze_silence", {
+      takeId,
+      sourceTrackId,
+      thresholdDb,
+      minSilenceMs,
+    }),
   /** Place a new region on a track. */
   addRegion: (
     takeId: string,

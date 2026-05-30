@@ -22,6 +22,7 @@ export type { Marker } from "./Marker";
 export type { ProjectSnapshot } from "./ProjectSnapshot";
 export type { TimelineSnapshot } from "./TimelineSnapshot";
 export type { WaveformPeaks } from "./WaveformPeaks";
+export type { SilenceSpan } from "./SilenceSpan";
 export type { RecentProject } from "./RecentProject";
 export type { TemplateInfo } from "./TemplateInfo";
 export type { TemplateTrackInfo } from "./TemplateTrackInfo";

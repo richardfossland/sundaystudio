@@ -4,12 +4,14 @@ import {
   applyOps,
   crossfadeOps,
   invertOps,
+  keptSpans,
   mergeableNext,
   mergeOps,
   overlapWithPrev,
   pasteRegion,
   regionDurationMs,
   regionEndMs,
+  removeSilencesOps,
   rippleDeleteOps,
   splitRegion,
   type PrimOp,
@@ -216,6 +218,61 @@ describe("editing command algebra", () => {
       });
       const cur = region({ id: "c", position_in_timeline_ms: 600 });
       expect(overlapWithPrev([prev, cur], cur)).toBeNull();
+    });
+  });
+
+  describe("remove silences", () => {
+    let counter = 0;
+    const mintId = () => `gen${counter++}`;
+
+    it("replaces a clip with ripple-packed kept spans, dropping the silence", () => {
+      counter = 0;
+      const r = region({
+        id: "r",
+        start_in_take_ms: 0,
+        end_in_take_ms: 1000,
+        position_in_timeline_ms: 2000,
+        fade_in_ms: 8,
+        fade_out_ms: 9,
+      });
+      // One 200ms silence in the middle (take-time 400..600).
+      const ops = removeSilencesOps(
+        r,
+        [{ start_ms: 400, end_ms: 600 }],
+        mintId,
+      );
+      const out = applyOps([r], ops);
+      expect(out).toHaveLength(2);
+      // Kept spans: 0..400 and 600..1000.
+      expect(out[0].start_in_take_ms).toBe(0);
+      expect(out[0].end_in_take_ms).toBe(400);
+      expect(out[0].position_in_timeline_ms).toBe(2000);
+      expect(out[0].fade_in_ms).toBe(8); // original outer fade preserved
+      // Second clip ripple-packed right after the first (400ms long).
+      expect(out[1].start_in_take_ms).toBe(600);
+      expect(out[1].position_in_timeline_ms).toBe(2400);
+      expect(out[1].fade_out_ms).toBe(9);
+      // Total kept duration shrank by the 200ms gap.
+      expect(regionDurationMs(out[0]) + regionDurationMs(out[1])).toBe(800);
+    });
+
+    it("is a no-op when there's no silence inside the window", () => {
+      const r = region({ start_in_take_ms: 0, end_in_take_ms: 1000 });
+      expect(removeSilencesOps(r, [], mintId)).toEqual([]);
+      // Silence entirely outside the region window is ignored too.
+      expect(
+        removeSilencesOps(r, [{ start_ms: 2000, end_ms: 3000 }], mintId),
+      ).toEqual([]);
+    });
+
+    it("keptSpans clips silences to the region window", () => {
+      const r = region({ start_in_take_ms: 100, end_in_take_ms: 900 });
+      // Silence overruns both edges → clipped to [100,900] minus the middle.
+      const kept = keptSpans(r, [
+        { start_ms: 0, end_ms: 200 },
+        { start_ms: 800, end_ms: 1200 },
+      ]);
+      expect(kept).toEqual([{ start_ms: 200, end_ms: 800 }]);
     });
   });
 

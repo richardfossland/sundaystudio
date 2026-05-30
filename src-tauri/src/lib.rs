@@ -72,6 +72,7 @@ pub fn run() {
             commands::export::export_render,
             commands::edit::project_timeline,
             commands::edit::audio_peaks,
+            commands::edit::analyze_silence,
             commands::edit::region_add,
             commands::edit::region_create,
             commands::edit::region_update,
