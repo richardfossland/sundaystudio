@@ -47,6 +47,79 @@ pub fn mix_to_mono(sources: &[MixSource]) -> Vec<f32> {
     mix
 }
 
+/// Convert a millisecond position to a sample index at `rate` (rounded).
+fn ms_to_samples(ms: f64, rate: u32) -> usize {
+    if ms <= 0.0 {
+        return 0;
+    }
+    (ms / 1000.0 * rate as f64).round() as usize
+}
+
+/// Render one region to audio: slice `[start_ms, end_ms)` out of the decoded
+/// source take, apply the per-clip gain, then linear fade-in/out. Pure — the
+/// caller supplies the source samples (mono, at `rate`). This is what makes
+/// export region-aware: trim, gain and fades are baked per clip before mixing.
+pub fn render_region(
+    source: &[f32],
+    rate: u32,
+    start_ms: f64,
+    end_ms: f64,
+    fade_in_ms: f64,
+    fade_out_ms: f64,
+    gain_db: f32,
+) -> Vec<f32> {
+    let s = ms_to_samples(start_ms, rate).min(source.len());
+    let e = ms_to_samples(end_ms, rate).min(source.len());
+    if e <= s {
+        return Vec::new();
+    }
+    let mut out = source[s..e].to_vec();
+
+    let g = 10.0_f32.powf(gain_db / 20.0);
+    if (g - 1.0).abs() > f32::EPSILON {
+        for x in &mut out {
+            *x *= g;
+        }
+    }
+
+    let n = out.len();
+    let fade_in = ms_to_samples(fade_in_ms, rate).min(n);
+    for (i, x) in out.iter_mut().take(fade_in).enumerate() {
+        *x *= i as f32 / fade_in as f32; // 0 → ~1 across the ramp
+    }
+    let fade_out = ms_to_samples(fade_out_ms, rate).min(n);
+    for k in 0..fade_out {
+        out[n - 1 - k] *= k as f32 / fade_out as f32; // 0 at the very end → up
+    }
+    out
+}
+
+/// A clip placed on a track timeline: its rendered mono audio at a ms position.
+pub struct PlacedClip {
+    pub position_ms: f64,
+    pub samples: Vec<f32>,
+}
+
+/// Sum placed clips into one mono track-timeline buffer at `rate`. Overlapping
+/// clips add, so two adjacent clips with matching fades crossfade naturally.
+pub fn assemble_timeline(clips: &[PlacedClip], rate: u32) -> Vec<f32> {
+    let len = clips
+        .iter()
+        .map(|c| ms_to_samples(c.position_ms, rate) + c.samples.len())
+        .max()
+        .unwrap_or(0);
+    let mut buf = vec![0.0_f32; len];
+    for c in clips {
+        let off = ms_to_samples(c.position_ms, rate);
+        for (i, &s) in c.samples.iter().enumerate() {
+            if off + i < buf.len() {
+                buf[off + i] += s;
+            }
+        }
+    }
+    buf
+}
+
 /// Expand a mono buffer to an interleaved buffer of `channels` (dual-mono).
 fn expand(mono: &[f32], channels: u16) -> Vec<f32> {
     if channels <= 1 {
@@ -292,6 +365,58 @@ mod tests {
         let (out, report) = render(&[], 1, SR, MasterPreset::MusicHeavy, &target).unwrap();
         assert!(out.is_empty());
         assert_eq!(report.before.integrated_lufs, None);
+    }
+
+    #[test]
+    fn render_region_slices_applies_gain_and_fades() {
+        // 1s of DC=1.0 at SR; slice the middle 500ms with a 100ms fade each side
+        // and −6 dB gain.
+        let source = vec![1.0_f32; SR as usize];
+        let out = render_region(&source, SR, 250.0, 750.0, 100.0, 100.0, -6.0);
+        let half = SR as usize / 2; // 500ms
+        assert_eq!(out.len(), half);
+        let g = 10.0_f32.powf(-6.0 / 20.0);
+        // Middle (past both fades) sits at the gain level.
+        let mid = out[half / 2];
+        assert!((mid - g).abs() < 1e-4, "mid {mid} vs {g}");
+        // Edges are faded to (near) zero.
+        assert!(out[0].abs() < 1e-4);
+        assert!(out[half - 1].abs() < 1e-4);
+        // Fade-in is monotonic up over its first 100ms.
+        let fi = SR as usize / 10;
+        assert!(out[fi / 2] < out[fi - 1]);
+    }
+
+    #[test]
+    fn render_region_clamps_out_of_range_window() {
+        let source = vec![0.5_f32; 100];
+        // end beyond source length is clamped; start past end yields empty.
+        assert!(render_region(&source, SR, 0.0, 10_000.0, 0.0, 0.0, 0.0).len() <= 100);
+        assert!(render_region(&source, SR, 900.0, 100.0, 0.0, 0.0, 0.0).is_empty());
+    }
+
+    #[test]
+    fn assemble_timeline_places_and_sums_overlap() {
+        // Two 10-sample clips; the second starts where samples overlap → they add.
+        let a = PlacedClip {
+            position_ms: 0.0,
+            samples: vec![1.0; 10],
+        };
+        let off_ms = 5.0 / SR as f64 * 1000.0; // 5 samples in
+        let b = PlacedClip {
+            position_ms: off_ms,
+            samples: vec![1.0; 10],
+        };
+        let buf = assemble_timeline(&[a, b], SR);
+        assert_eq!(buf.len(), 15); // 5 offset + 10
+        assert_eq!(buf[0], 1.0); // only a
+        assert_eq!(buf[5], 2.0); // a + b overlap
+        assert_eq!(buf[14], 1.0); // only b tail
+    }
+
+    #[test]
+    fn assemble_timeline_empty_is_empty() {
+        assert!(assemble_timeline(&[], SR).is_empty());
     }
 
     #[test]

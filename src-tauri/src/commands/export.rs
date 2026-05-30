@@ -8,6 +8,7 @@
 //! MP3/AAC/FLAC encoding (the ffmpeg sidecar) is Phase 7.1b: for those presets
 //! we still write the master WAV and say so in `note`.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -20,8 +21,26 @@ use crate::dsp::loudness::{self, LoudnessTarget, NormalizationReport};
 use crate::dsp::master::MasterPreset;
 use crate::error::{AppError, AppResult};
 use crate::export::format::{self, ExportFormat, ExportPresetInfo};
-use crate::export::render::{self, MixSource};
+use crate::export::render::{self, MixSource, PlacedClip};
 use crate::project::{scast, store};
+
+/// One clip to bake into a track's timeline during export.
+struct ClipPlan {
+    wav_path: PathBuf,
+    start_ms: f64,
+    end_ms: f64,
+    fade_in_ms: f64,
+    fade_out_ms: f64,
+    gain_db: f32,
+    position_ms: f64,
+}
+
+/// One track's export plan: its clips plus the track's mixer state.
+struct TrackPlan {
+    gain_db: f32,
+    mute: bool,
+    clips: Vec<ClipPlan>,
+}
 
 /// The outcome of an export render, returned to the UI.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -72,38 +91,51 @@ pub async fn export_render(
         .and_then(MasterPreset::from_id)
         .unwrap_or(MasterPreset::ConversationPodcast);
 
-    // Resolve the latest take's per-track WAVs from the open project (async DB).
-    let (inputs, rate, out_path) = {
+    // Resolve the timeline (tracks + their placed regions) from the open project.
+    // Export is region-aware: each clip is trimmed, gained and faded at its
+    // timeline position, so what you arranged in the editor is what bounces.
+    let (plans, rate, out_path) = {
         let guard = state.current.lock().await;
         let op = current(&guard)?;
         let project = store::load_project(&op.pool).await?;
         let tracks = store::list_tracks(&op.pool, &op.project_id).await?;
-        let mut takes = store::list_takes(&op.pool, &op.project_id).await?;
-        // Most recent take first.
-        takes.sort_by(|a, b| {
-            b.started_at
-                .partial_cmp(&a.started_at)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        let take = takes
-            .into_iter()
-            .next()
-            .ok_or_else(|| AppError::Validation("nothing to export yet — record a take first".into()))?;
-        let dir = scast::take_dir(&op.scast_dir, &take.id);
+        let regions = store::list_project_regions(&op.pool, &op.project_id).await?;
+        if regions.is_empty() {
+            return Err(AppError::Validation(
+                "nothing to export yet — import or record audio, then arrange clips on the timeline".into(),
+            ));
+        }
 
         let soloed = tracks.iter().any(|t| t.solo);
-        let mut inputs: Vec<(PathBuf, f32, bool)> = Vec::new();
+        let mut plans: Vec<TrackPlan> = Vec::new();
         for t in &tracks {
-            let path = dir.join(format!("{}.wav", t.id));
-            if !path.exists() {
-                continue; // this track captured no audio in the take
+            let clips: Vec<ClipPlan> = regions
+                .iter()
+                .filter(|r| r.target_track_id == t.id)
+                .map(|r| ClipPlan {
+                    wav_path: scast::take_dir(&op.scast_dir, &r.take_id)
+                        .join(format!("{}.wav", r.source_track_id)),
+                    start_ms: r.start_in_take_ms,
+                    end_ms: r.end_in_take_ms,
+                    fade_in_ms: r.fade_in_ms,
+                    fade_out_ms: r.fade_out_ms,
+                    gain_db: r.gain_adjust_db as f32,
+                    position_ms: r.position_in_timeline_ms,
+                })
+                .collect();
+            if clips.is_empty() {
+                continue; // this track has no clips on the timeline
             }
             let active = if soloed { t.solo } else { true };
-            inputs.push((path, t.gain_db as f32, t.mute || !active));
+            plans.push(TrackPlan {
+                gain_db: t.gain_db as f32,
+                mute: t.mute || !active,
+                clips,
+            });
         }
-        if inputs.iter().all(|(_, _, muted)| *muted) {
+        if plans.is_empty() || plans.iter().all(|p| p.mute) {
             return Err(AppError::Validation(
-                "nothing audible to export in the latest take".into(),
+                "nothing audible to export — every track is muted or empty".into(),
             ));
         }
 
@@ -111,24 +143,26 @@ pub async fn export_render(
         fs::create_dir_all(&exports_dir)?;
         let stem = sanitize_stem(&project.name);
         let out_path = exports_dir.join(format!("{stem}.wav"));
-        (inputs, project.sample_rate as u32, out_path)
+        (plans, project.sample_rate as u32, out_path)
     };
 
     let channels = preset.channels;
 
     // Mixing, DSP and file IO are CPU/blocking — keep them off the async runtime.
     tokio::task::spawn_blocking(move || {
-        render_and_write(inputs, &out_path, channels, rate, master, &target, &preset, &preset_id)
+        render_and_write(plans, &out_path, channels, rate, master, &target, &preset, &preset_id)
     })
     .await
     .map_err(|e| AppError::Internal(format!("export task failed: {e}")))?
 }
 
-/// Read the sources, render, write the WAV, and assemble the result. Sync —
-/// runs inside `spawn_blocking`.
+/// Assemble each track's timeline from its clips, mix, master, write the WAV, and
+/// build the result. Sync — runs inside `spawn_blocking`. Each source WAV is
+/// decoded once and reused across the clips that reference it (e.g. both halves
+/// of a split).
 #[allow(clippy::too_many_arguments)]
 fn render_and_write(
-    inputs: Vec<(PathBuf, f32, bool)>,
+    plans: Vec<TrackPlan>,
     out_path: &Path,
     channels: u16,
     rate: u32,
@@ -137,15 +171,42 @@ fn render_and_write(
     preset: &ExportPresetInfo,
     preset_id: &str,
 ) -> AppResult<ExportResult> {
-    let mut sources = Vec::with_capacity(inputs.len());
-    for (path, gain_db, mute) in inputs {
-        let (samples, src_rate) = render::read_wav_mono(&path).map_err(AppError::Audio)?;
-        if src_rate != rate {
-            return Err(AppError::Validation(format!(
-                "take audio is {src_rate} Hz but the project is {rate} Hz — sample-rate conversion lands in a later phase"
-            )));
+    let mut cache: HashMap<PathBuf, Vec<f32>> = HashMap::new();
+    let mut sources = Vec::with_capacity(plans.len());
+    for plan in &plans {
+        let mut clips: Vec<PlacedClip> = Vec::with_capacity(plan.clips.len());
+        for clip in &plan.clips {
+            if !clip.wav_path.exists() {
+                continue; // a region whose audio is missing — skip, don't abort
+            }
+            if !cache.contains_key(&clip.wav_path) {
+                let (samples, src_rate) =
+                    render::read_wav_mono(&clip.wav_path).map_err(AppError::Audio)?;
+                if src_rate != rate {
+                    return Err(AppError::Validation(format!(
+                        "clip audio is {src_rate} Hz but the project is {rate} Hz — sample-rate conversion lands in a later phase"
+                    )));
+                }
+                cache.insert(clip.wav_path.clone(), samples);
+            }
+            let source = &cache[&clip.wav_path];
+            let samples = render::render_region(
+                source,
+                rate,
+                clip.start_ms,
+                clip.end_ms,
+                clip.fade_in_ms,
+                clip.fade_out_ms,
+                clip.gain_db,
+            );
+            clips.push(PlacedClip { position_ms: clip.position_ms, samples });
         }
-        sources.push(MixSource { samples, gain_db, mute });
+        let track_buf = render::assemble_timeline(&clips, rate);
+        sources.push(MixSource {
+            samples: track_buf,
+            gain_db: plan.gain_db,
+            mute: plan.mute,
+        });
     }
 
     let (out, report) = render::render(&sources, channels, rate, master, target)?;
