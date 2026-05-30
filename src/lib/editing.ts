@@ -87,6 +87,110 @@ export function splitRegion(
   return { left, right };
 }
 
+/** Clips within this many ms count as contiguous (rounding tolerance). */
+const CONTIGUOUS_EPS_MS = 1;
+
+/**
+ * The clip immediately after `region` on the same track that continues the same
+ * source take with no gap — i.e. the inverse of a split. Returns null if there's
+ * nothing cleanly mergeable (merging only makes sense for one continuous source).
+ */
+export function mergeableNext(
+  regions: Region[],
+  region: Region,
+): Region | null {
+  const end = regionEndMs(region);
+  return (
+    regions.find(
+      (r) =>
+        r.id !== region.id &&
+        r.target_track_id === region.target_track_id &&
+        r.take_id === region.take_id &&
+        r.source_track_id === region.source_track_id &&
+        Math.abs(r.position_in_timeline_ms - end) <= CONTIGUOUS_EPS_MS &&
+        Math.abs(r.start_in_take_ms - region.end_in_take_ms) <=
+          CONTIGUOUS_EPS_MS,
+    ) ?? null
+  );
+}
+
+/** Ops to merge `region` with its contiguous next clip into a single region. */
+export function mergeOps(region: Region, next: Region): PrimOp[] {
+  return [
+    {
+      kind: "update",
+      before: region,
+      after: {
+        ...region,
+        end_in_take_ms: next.end_in_take_ms,
+        fade_out_ms: next.fade_out_ms,
+      },
+    },
+    { kind: "delete", region: next },
+  ];
+}
+
+/**
+ * If `region` overlaps the clip just before it on the same track, return that
+ * clip and the overlap length; else null. Used to offer a crossfade.
+ */
+export function overlapWithPrev(
+  regions: Region[],
+  region: Region,
+): { prev: Region; overlapMs: number } | null {
+  let prev: Region | null = null;
+  for (const r of regions) {
+    if (r.id === region.id || r.target_track_id !== region.target_track_id) {
+      continue;
+    }
+    if (r.position_in_timeline_ms <= region.position_in_timeline_ms) {
+      if (!prev || r.position_in_timeline_ms > prev.position_in_timeline_ms) {
+        prev = r;
+      }
+    }
+  }
+  if (!prev) return null;
+  const overlapMs = regionEndMs(prev) - region.position_in_timeline_ms;
+  return overlapMs > 0 ? { prev, overlapMs } : null;
+}
+
+/**
+ * Ops to crossfade `region` with the overlapping previous clip: fade the earlier
+ * clip out and this one in across the overlap. (Linear fades — equal-power is a
+ * later refinement; for voice the difference is inaudible.)
+ */
+export function crossfadeOps(
+  prev: Region,
+  region: Region,
+  overlapMs: number,
+): PrimOp[] {
+  return [
+    {
+      kind: "update",
+      before: prev,
+      after: { ...prev, fade_out_ms: overlapMs },
+    },
+    {
+      kind: "update",
+      before: region,
+      after: { ...region, fade_in_ms: overlapMs },
+    },
+  ];
+}
+
+/** A pasted copy of a clip: same source/trim/fades/gain, new id + position. */
+export function pasteRegion(
+  clip: Region,
+  newId: string,
+  positionMs: number,
+): Region {
+  return {
+    ...clip,
+    id: newId,
+    position_in_timeline_ms: Math.max(0, positionMs),
+  };
+}
+
 /**
  * Ops for a ripple delete: remove `target` and pull every later clip on the same
  * track earlier by the gap it left, so there's no hole. Clips before the target

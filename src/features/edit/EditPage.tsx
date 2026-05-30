@@ -3,6 +3,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   AlertTriangle,
   ArrowLeft,
+  Blend,
+  ClipboardPaste,
+  Combine,
+  Copy,
   FilePlus2,
   FoldHorizontal,
   Loader2,
@@ -12,6 +16,7 @@ import {
   Plus,
   Redo2,
   Scissors,
+  SquareScissors,
   Trash2,
   Undo2,
   Volume2,
@@ -24,7 +29,12 @@ import { Timecode } from "@/components/audio";
 import { cn } from "@/lib/cn";
 import {
   applyOps,
+  crossfadeOps,
   invertOps,
+  mergeableNext,
+  mergeOps,
+  overlapWithPrev,
+  pasteRegion,
   rippleDeleteOps,
   splitRegion,
   type EditCommand,
@@ -83,6 +93,9 @@ export function EditPage({
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The copied clip lives in a ref (no re-render on copy); a flag drives the UI.
+  const clipboardRef = useRef<Region | null>(null);
+  const [hasClipboard, setHasClipboard] = useState(false);
 
   // Refs mirror the latest state so event handlers (drags, keyboard) read
   // current values without stale closures or nested setState.
@@ -227,27 +240,97 @@ export function EditPage({
     [run],
   );
 
-  // Keyboard: edit ops + undo/redo (skip while typing in a field).
+  const mergeWithNext = useCallback(
+    (id: string) => {
+      const target = regionsRef.current.find((r) => r.id === id);
+      if (!target) return;
+      const next = mergeableNext(regionsRef.current, target);
+      if (!next) return;
+      run({ label: "Merge", ops: mergeOps(target, next) });
+      select(target.id);
+    },
+    [run, select],
+  );
+
+  const crossfadePrev = useCallback(
+    (id: string) => {
+      const target = regionsRef.current.find((r) => r.id === id);
+      if (!target) return;
+      const ov = overlapWithPrev(regionsRef.current, target);
+      if (!ov) return;
+      run({
+        label: "Crossfade",
+        ops: crossfadeOps(ov.prev, target, ov.overlapMs),
+      });
+    },
+    [run],
+  );
+
+  const copyRegion = useCallback((id: string) => {
+    const r = regionsRef.current.find((x) => x.id === id);
+    if (!r) return;
+    clipboardRef.current = r;
+    setHasClipboard(true);
+  }, []);
+
+  const cutRegion = useCallback(
+    (id: string) => {
+      copyRegion(id);
+      deleteRegion(id);
+    },
+    [copyRegion, deleteRegion],
+  );
+
+  const pasteClipboard = useCallback(() => {
+    const clip = clipboardRef.current;
+    if (!clip) return;
+    const pasted = pasteRegion(clip, crypto.randomUUID(), playheadMs);
+    run({ label: "Paste", ops: [{ kind: "create", region: pasted }] });
+    select(pasted.id);
+  }, [run, select, playheadMs]);
+
+  // Keyboard: edit ops + clipboard + undo/redo (skip while typing in a field).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const el = e.target as HTMLElement | null;
       if (el && /^(INPUT|TEXTAREA)$/.test(el.tagName)) return;
       const mod = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
 
-      if (mod && e.key.toLowerCase() === "z") {
+      if (mod && key === "z") {
         e.preventDefault();
         if (e.shiftKey) redo();
         else undo();
         return;
       }
-      if (mod && e.key.toLowerCase() === "y") {
+      if (mod && key === "y") {
         e.preventDefault();
         redo();
         return;
       }
-      if (!mod && e.key.toLowerCase() === "s") {
+      if (mod && key === "c" && selectedRegionId) {
+        e.preventDefault();
+        copyRegion(selectedRegionId);
+        return;
+      }
+      if (mod && key === "x" && selectedRegionId) {
+        e.preventDefault();
+        cutRegion(selectedRegionId);
+        return;
+      }
+      if (mod && key === "v") {
+        e.preventDefault();
+        pasteClipboard();
+        return;
+      }
+      if (!mod && key === "s") {
         e.preventDefault();
         splitSelected();
+        return;
+      }
+      if (!mod && key === "m" && selectedRegionId) {
+        e.preventDefault();
+        mergeWithNext(selectedRegionId);
         return;
       }
       if ((e.key === "Delete" || e.key === "Backspace") && selectedRegionId) {
@@ -258,7 +341,18 @@ export function EditPage({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedRegionId, undo, redo, splitSelected, deleteRegion, rippleDelete]);
+  }, [
+    selectedRegionId,
+    undo,
+    redo,
+    splitSelected,
+    deleteRegion,
+    rippleDelete,
+    mergeWithNext,
+    copyRegion,
+    cutRegion,
+    pasteClipboard,
+  ]);
 
   async function importAudio() {
     setError(null);
@@ -304,6 +398,8 @@ export function EditPage({
     playheadMs <
       selected.position_in_timeline_ms +
         (selected.end_in_take_ms - selected.start_in_take_ms);
+  const canMerge = !!selected && !!mergeableNext(regions, selected);
+  const canCrossfade = !!selected && !!overlapWithPrev(regions, selected);
 
   return (
     <div className="flex h-screen flex-col">
@@ -368,6 +464,16 @@ export function EditPage({
             title="Redo (⌘⇧Z)"
           >
             <Redo2 size={15} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={pasteClipboard}
+            disabled={!hasClipboard}
+            aria-label="Paste"
+            title="Paste clip at playhead (⌘V)"
+          >
+            <ClipboardPaste size={15} />
           </Button>
           <div className="mx-1 h-5 w-px bg-[var(--color-border)]" />
           <Button
@@ -471,6 +577,26 @@ export function EditPage({
               <Scissors size={14} />
               Split
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => mergeWithNext(selected.id)}
+              disabled={!canMerge}
+              title="Merge with the next clip (M)"
+            >
+              <Combine size={14} />
+              Merge
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => crossfadePrev(selected.id)}
+              disabled={!canCrossfade}
+              title="Crossfade with the overlapping clip"
+            >
+              <Blend size={14} />
+              Crossfade
+            </Button>
 
             {/* Per-clip gain */}
             <div className="flex items-center gap-1.5">
@@ -503,6 +629,24 @@ export function EditPage({
           </div>
 
           <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => copyRegion(selected.id)}
+              title="Copy clip (⌘C)"
+            >
+              <Copy size={14} />
+              Copy
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => cutRegion(selected.id)}
+              title="Cut clip (⌘X)"
+            >
+              <SquareScissors size={14} />
+              Cut
+            </Button>
             <Button
               variant="ghost"
               size="sm"

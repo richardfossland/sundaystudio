@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyOps,
+  crossfadeOps,
   invertOps,
+  mergeableNext,
+  mergeOps,
+  overlapWithPrev,
+  pasteRegion,
   regionDurationMs,
   regionEndMs,
   rippleDeleteOps,
@@ -142,6 +147,90 @@ describe("editing command algebra", () => {
       // Only the delete of `a` — no shift op for the other-track clip.
       expect(ops).toHaveLength(1);
       expect(ops[0]).toEqual({ kind: "delete", region: a });
+    });
+  });
+
+  describe("merge", () => {
+    it("is the inverse of split: a split then merge restores the original", () => {
+      const r = region({
+        id: "r",
+        start_in_take_ms: 0,
+        end_in_take_ms: 1000,
+        position_in_timeline_ms: 0,
+      });
+      const { left, right } = splitRegion(r, 600, "right")!;
+      const next = mergeableNext([left, right], left);
+      expect(next?.id).toBe("right");
+      const out = applyOps([left, right], mergeOps(left, next!));
+      expect(out).toHaveLength(1);
+      expect(out[0].id).toBe("r"); // left keeps the original region's id
+      expect(out[0].start_in_take_ms).toBe(0);
+      expect(out[0].end_in_take_ms).toBe(1000); // back to the full span
+    });
+
+    it("declines to merge across a gap or a different take", () => {
+      const a = region({
+        id: "a",
+        position_in_timeline_ms: 0,
+        end_in_take_ms: 1000,
+      });
+      const gapped = region({ id: "b", position_in_timeline_ms: 1500 });
+      expect(mergeableNext([a, gapped], a)).toBeNull();
+      const otherTake = region({
+        id: "c",
+        take_id: "t2",
+        position_in_timeline_ms: 1000,
+        start_in_take_ms: 0,
+      });
+      expect(mergeableNext([a, otherTake], a)).toBeNull();
+    });
+  });
+
+  describe("crossfade", () => {
+    it("detects overlap with the previous clip and fades both across it", () => {
+      const prev = region({
+        id: "p",
+        position_in_timeline_ms: 0,
+        end_in_take_ms: 1000,
+      });
+      const cur = region({
+        id: "c",
+        position_in_timeline_ms: 800,
+        end_in_take_ms: 1000,
+      });
+      const ov = overlapWithPrev([prev, cur], cur);
+      expect(ov?.overlapMs).toBe(200);
+      const out = applyOps(
+        [prev, cur],
+        crossfadeOps(ov!.prev, cur, ov!.overlapMs),
+      );
+      expect(out.find((r) => r.id === "p")!.fade_out_ms).toBe(200);
+      expect(out.find((r) => r.id === "c")!.fade_in_ms).toBe(200);
+    });
+
+    it("returns null when clips don't overlap", () => {
+      const prev = region({
+        id: "p",
+        position_in_timeline_ms: 0,
+        end_in_take_ms: 500,
+      });
+      const cur = region({ id: "c", position_in_timeline_ms: 600 });
+      expect(overlapWithPrev([prev, cur], cur)).toBeNull();
+    });
+  });
+
+  describe("paste", () => {
+    it("clones a clip with a new id at the playhead", () => {
+      const src = region({
+        id: "src",
+        gain_adjust_db: -3,
+        position_in_timeline_ms: 0,
+      });
+      const pasted = pasteRegion(src, "new", 5000);
+      expect(pasted.id).toBe("new");
+      expect(pasted.position_in_timeline_ms).toBe(5000);
+      expect(pasted.gain_adjust_db).toBe(-3);
+      expect(pasted.take_id).toBe(src.take_id);
     });
   });
 });
