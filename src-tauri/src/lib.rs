@@ -73,6 +73,7 @@ pub fn run() {
             commands::edit::project_timeline,
             commands::edit::audio_peaks,
             commands::edit::region_add,
+            commands::edit::region_create,
             commands::edit::region_update,
             commands::edit::region_delete,
             commands::edit::take_import,

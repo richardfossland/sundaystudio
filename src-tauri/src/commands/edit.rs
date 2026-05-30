@@ -89,6 +89,19 @@ pub async fn region_add(
     .await
 }
 
+/// Insert a region with a caller-supplied id. Used by edits like split and
+/// undo/redo, where the frontend mints the id up front so the operation has a
+/// stable, reversible inverse (`region_delete(id)` / re-`region_create`).
+#[tauri::command]
+pub async fn region_create(state: State<'_, ProjectState>, region: Region) -> AppResult<Region> {
+    if region.id.is_empty() {
+        return Err(AppError::Validation("region id required".into()));
+    }
+    let guard = state.current.lock().await;
+    let op = current(&guard)?;
+    store::add_region(&op.pool, region).await
+}
+
 /// Persist a region edit (move, trim, fade, gain, or retarget to another track).
 #[tauri::command]
 pub async fn region_update(state: State<'_, ProjectState>, region: Region) -> AppResult<()> {
