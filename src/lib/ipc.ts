@@ -188,6 +188,8 @@ export const edit = {
       endInTakeMs,
       positionInTimelineMs,
     }),
+  /** Insert a region with a caller-supplied id (for split / undo-redo). */
+  createRegion: (region: Region) => call<Region>("region_create", { region }),
   /** Persist a region edit (move / trim / fade / gain). */
   updateRegion: (region: Region) => call<void>("region_update", { region }),
   /** Delete a region (its take is untouched). */

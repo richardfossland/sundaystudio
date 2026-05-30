@@ -7,7 +7,7 @@ import { ipc } from "@/lib/ipc";
 import { msToPx, pxToMs, snap } from "@/lib/timeline";
 import type { Region } from "@/lib/bindings";
 
-type DragMode = "move" | "trim-l" | "trim-r";
+type DragMode = "move" | "trim-l" | "trim-r" | "fade-l" | "fade-r";
 
 /** Minimum clip length, in ms — keeps a region grabbable and audible. */
 const MIN_REGION_MS = 20;
@@ -18,13 +18,16 @@ interface Draft {
   positionMs: number;
   startMs: number;
   endMs: number;
+  fadeInMs: number;
+  fadeOutMs: number;
 }
 
 /**
- * One clip on the timeline. Renders the take's waveform slice, and supports the
- * Phase 3.1 interactions: click to select, drag the body to move, drag an edge
- * to trim. Edits preview live (local draft) and commit to the backend on release
- * via `onCommit`. Fades render as read-only overlays (editing them is Phase 3.2).
+ * One clip on the timeline. Renders the take's waveform slice and supports the
+ * direct-manipulation edits: drag the body to move, drag an edge to trim, drag a
+ * top corner to set a fade, click to select. Edits preview live (local draft)
+ * and commit once on release via `onCommit`, which the EditPage routes through
+ * the undo/redo stack.
  */
 export function RegionBlock({
   region,
@@ -56,13 +59,16 @@ export function RegionBlock({
     gcTime: Infinity,
   });
 
-  const live: Draft = draft ?? {
+  const base: Draft = {
     positionMs: region.position_in_timeline_ms,
     startMs: region.start_in_take_ms,
     endMs: region.end_in_take_ms,
+    fadeInMs: region.fade_in_ms,
+    fadeOutMs: region.fade_out_ms,
   };
+  const live = draft ?? base;
   const durationMs = Math.max(MIN_REGION_MS, live.endMs - live.startMs);
-  const left = msToPx(live.positionMs, pxPerSec);
+  const leftPx = msToPx(live.positionMs, pxPerSec);
   const width = msToPx(durationMs, pxPerSec);
   const takeDurationMs =
     peaksQuery.data?.duration_ms ?? Number.POSITIVE_INFINITY;
@@ -77,11 +83,6 @@ export function RegionBlock({
     onSelect();
 
     const startX = e.clientX;
-    const base: Draft = {
-      positionMs: region.position_in_timeline_ms,
-      startMs: region.start_in_take_ms,
-      endMs: region.end_in_take_ms,
-    };
     const tolMs = pxToMs(SNAP_PX, pxPerSec);
     const maybeSnap = (ms: number) =>
       snapEnabled ? snap(ms, snapTargets, tolMs) : ms;
@@ -89,6 +90,7 @@ export function RegionBlock({
 
     const onMove = (ev: PointerEvent) => {
       const deltaMs = pxToMs(ev.clientX - startX, pxPerSec);
+      const dur = base.endMs - base.startMs;
 
       if (mode === "move") {
         const positionMs = Math.max(0, maybeSnap(base.positionMs + deltaMs));
@@ -100,21 +102,27 @@ export function RegionBlock({
         let shift = edge - base.positionMs;
         // Clamp so start stays ≥ 0 and the clip keeps a minimum length.
         shift = Math.max(shift, -base.startMs);
-        shift = Math.min(shift, base.endMs - base.startMs - MIN_REGION_MS);
+        shift = Math.min(shift, dur - MIN_REGION_MS);
         latest = {
           ...base,
           positionMs: base.positionMs + shift,
           startMs: base.startMs + shift,
         };
-      } else {
+      } else if (mode === "trim-r") {
         // Drag the right edge: snap its timeline position, then move end only.
-        const rightEdge = maybeSnap(
-          base.positionMs + (base.endMs - base.startMs) + deltaMs,
-        );
+        const rightEdge = maybeSnap(base.positionMs + dur + deltaMs);
         let endMs = base.startMs + (rightEdge - base.positionMs);
         endMs = Math.max(endMs, base.startMs + MIN_REGION_MS);
         endMs = Math.min(endMs, takeDurationMs);
         latest = { ...base, endMs };
+      } else if (mode === "fade-l") {
+        // Drag the top-left grip right to lengthen the fade-in (no snap).
+        const fadeInMs = clampFade(base.fadeInMs + deltaMs, dur);
+        latest = { ...base, fadeInMs };
+      } else {
+        // Drag the top-right grip left to lengthen the fade-out.
+        const fadeOutMs = clampFade(base.fadeOutMs - deltaMs, dur);
+        latest = { ...base, fadeOutMs };
       }
       setDraft(latest);
     };
@@ -124,16 +132,20 @@ export function RegionBlock({
       window.removeEventListener("pointerup", onUp);
       setDraft(null);
       // A pure click (no movement) leaves the clip unchanged — don't persist.
-      const moved =
+      const changed =
         latest.positionMs !== base.positionMs ||
         latest.startMs !== base.startMs ||
-        latest.endMs !== base.endMs;
-      if (moved) {
+        latest.endMs !== base.endMs ||
+        latest.fadeInMs !== base.fadeInMs ||
+        latest.fadeOutMs !== base.fadeOutMs;
+      if (changed) {
         onCommit({
           ...region,
           position_in_timeline_ms: latest.positionMs,
           start_in_take_ms: latest.startMs,
           end_in_take_ms: latest.endMs,
+          fade_in_ms: latest.fadeInMs,
+          fade_out_ms: latest.fadeOutMs,
         });
       }
     };
@@ -145,8 +157,8 @@ export function RegionBlock({
 
   // Slice the take's peaks to this region's [start,end] window.
   const peakSlice = slicePeaks(peaksQuery.data, live.startMs, live.endMs);
-  const fadeInPct = clampPct((region.fade_in_ms / durationMs) * 100);
-  const fadeOutPct = clampPct((region.fade_out_ms / durationMs) * 100);
+  const fadeInPct = clampPct((live.fadeInMs / durationMs) * 100);
+  const fadeOutPct = clampPct((live.fadeOutMs / durationMs) * 100);
 
   return (
     <div
@@ -164,7 +176,7 @@ export function RegionBlock({
           : "border-[var(--color-border)]",
       )}
       style={{
-        left,
+        left: leftPx,
         width: Math.max(2, width),
         background: `color-mix(in oklab, ${color} 22%, var(--color-bg-elevated))`,
       }}
@@ -178,7 +190,7 @@ export function RegionBlock({
         )}
       </div>
 
-      {/* Fade overlays (read-only in 3.1) */}
+      {/* Fade overlays */}
       {fadeInPct > 0 && (
         <div
           className="pointer-events-none absolute inset-y-0 left-0 bg-gradient-to-r from-[var(--color-bg)]/55 to-transparent"
@@ -192,17 +204,38 @@ export function RegionBlock({
         />
       )}
 
-      {/* Trim handles */}
+      {/* Trim handles (full-height edges) */}
       <div
         onPointerDown={(e) => beginDrag("trim-l", e)}
-        className="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize bg-[var(--color-accent)]/0 hover:bg-[var(--color-accent)]/60"
+        className="absolute inset-y-0 left-0 w-1.5 cursor-ew-resize hover:bg-[var(--color-accent)]/60"
       />
       <div
         onPointerDown={(e) => beginDrag("trim-r", e)}
-        className="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize bg-[var(--color-accent)]/0 hover:bg-[var(--color-accent)]/60"
+        className="absolute inset-y-0 right-0 w-1.5 cursor-ew-resize hover:bg-[var(--color-accent)]/60"
       />
+
+      {/* Fade grips (top corners) — only when selected, to stay uncluttered */}
+      {selected && (
+        <>
+          <div
+            onPointerDown={(e) => beginDrag("fade-l", e)}
+            title="Drag to fade in"
+            className="absolute left-1 top-0.5 size-2.5 cursor-ew-resize rounded-full border border-[var(--color-bg)] bg-[var(--color-accent)]"
+          />
+          <div
+            onPointerDown={(e) => beginDrag("fade-r", e)}
+            title="Drag to fade out"
+            className="absolute right-1 top-0.5 size-2.5 cursor-ew-resize rounded-full border border-[var(--color-bg)] bg-[var(--color-accent)]"
+          />
+        </>
+      )}
     </div>
   );
+}
+
+/** Clamp a fade length to [0, clip duration]. */
+function clampFade(ms: number, durationMs: number): number {
+  return Math.min(Math.max(0, ms), Math.max(0, durationMs));
 }
 
 function clampPct(p: number): number {
