@@ -70,6 +70,12 @@ pub fn run() {
             commands::dsp::dsp_analyze_file,
             commands::export::export_presets,
             commands::export::export_render,
+            commands::edit::project_timeline,
+            commands::edit::audio_peaks,
+            commands::edit::region_add,
+            commands::edit::region_update,
+            commands::edit::region_delete,
+            commands::edit::take_import,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

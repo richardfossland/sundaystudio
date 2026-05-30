@@ -8,6 +8,7 @@ import {
   Info,
   Loader2,
   Plus,
+  SlidersHorizontal,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
@@ -36,7 +37,13 @@ const TRACK_COLORS = [
  * hardware to exercise (Phase 1.2 `stream` + integration in a hardware session).
  * Meters therefore read silence here.
  */
-export function RecordingPage({ onBack }: { onBack?: () => void }) {
+export function RecordingPage({
+  onBack,
+  onOpenEdit,
+}: {
+  onBack?: () => void;
+  onOpenEdit?: () => void;
+}) {
   const snapshot = useSession((s) => s.snapshot);
   const setSnapshot = useSession((s) => s.setSnapshot);
   const [recordState, setRecordState] = useState<
@@ -136,6 +143,12 @@ export function RecordingPage({ onBack }: { onBack?: () => void }) {
         </div>
 
         <div className="flex items-center gap-5">
+          {onOpenEdit && (
+            <Button variant="ghost" size="sm" onClick={onOpenEdit}>
+              <SlidersHorizontal size={15} />
+              Edit
+            </Button>
+          )}
           <Button
             variant="surface"
             size="sm"

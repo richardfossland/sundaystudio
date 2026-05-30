@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { StartPage } from "@/features/start/StartPage";
 import { RecordingPage } from "@/features/record/RecordingPage";
+import { EditPage } from "@/features/edit/EditPage";
 import { DesignPage } from "@/features/design/DesignPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { HomePage } from "@/features/home/HomePage";
@@ -11,11 +12,19 @@ import { useSession } from "@/lib/session";
  *  the recording page when a project is open, the Start gallery otherwise. */
 type Route = "main" | "design" | "settings" | "diagnostics";
 
+/** When a project is open, which workspace is showing. */
+type ProjectView = "record" | "edit";
+
 function App() {
   const [route, setRoute] = useState<Route>("main");
+  const [projectView, setProjectView] = useState<ProjectView>("record");
   const snapshot = useSession((s) => s.snapshot);
-  const closeProject = useSession((s) => s.close);
+  const close = useSession((s) => s.close);
   const back = () => setRoute("main");
+  const closeProject = () => {
+    setProjectView("record");
+    close();
+  };
 
   let content;
   if (route === "design") {
@@ -25,7 +34,18 @@ function App() {
   } else if (route === "diagnostics") {
     content = <HomePage onBack={back} />;
   } else if (snapshot) {
-    content = <RecordingPage onBack={closeProject} />;
+    content =
+      projectView === "edit" ? (
+        <EditPage
+          onBack={closeProject}
+          onOpenRecord={() => setProjectView("record")}
+        />
+      ) : (
+        <RecordingPage
+          onBack={closeProject}
+          onOpenEdit={() => setProjectView("edit")}
+        />
+      );
   } else {
     content = (
       <StartPage

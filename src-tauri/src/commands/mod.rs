@@ -8,5 +8,6 @@
 pub mod app;
 pub mod audio;
 pub mod dsp;
+pub mod edit;
 pub mod export;
 pub mod project;

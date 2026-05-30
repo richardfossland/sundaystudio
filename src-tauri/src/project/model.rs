@@ -93,6 +93,16 @@ pub struct ProjectSnapshot {
     pub markers: Vec<Marker>,
 }
 
+/// A project's takes and the regions placed from them — what `project_timeline`
+/// returns so the editor can render the whole timeline in one round-trip. Tracks
+/// and markers already come from [`ProjectSnapshot`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../src/lib/bindings/TimelineSnapshot.ts")]
+pub struct TimelineSnapshot {
+    pub takes: Vec<Take>,
+    pub regions: Vec<Region>,
+}
+
 /// A recent-projects entry (stored app-side, see `scast`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../src/lib/bindings/RecentProject.ts")]

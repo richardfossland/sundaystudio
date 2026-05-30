@@ -28,9 +28,12 @@ import type {
   Project,
   ProjectSnapshot,
   RecentProject,
+  Region,
   TemplateInfo,
+  TimelineSnapshot,
   ToneResult,
   Track,
+  WaveformPeaks,
 } from "./bindings";
 
 const DEV = import.meta.env.DEV;
@@ -160,6 +163,40 @@ export const dsp = {
     call<LoudnessMeasurement>("dsp_analyze_file", { path }),
 };
 
+// ── Edit / timeline ────────────────────────────────────────────────────────────
+
+export const edit = {
+  /** The open project's takes and placed regions (the editor timeline). */
+  timeline: () => call<TimelineSnapshot>("project_timeline"),
+  /** A take track's waveform overview (computed + cached on first request). */
+  peaks: (takeId: string, sourceTrackId: string) =>
+    call<WaveformPeaks>("audio_peaks", { takeId, sourceTrackId }),
+  /** Place a new region on a track. */
+  addRegion: (
+    takeId: string,
+    sourceTrackId: string,
+    targetTrackId: string,
+    startInTakeMs: number,
+    endInTakeMs: number,
+    positionInTimelineMs: number,
+  ) =>
+    call<Region>("region_add", {
+      takeId,
+      sourceTrackId,
+      targetTrackId,
+      startInTakeMs,
+      endInTakeMs,
+      positionInTimelineMs,
+    }),
+  /** Persist a region edit (move / trim / fade / gain). */
+  updateRegion: (region: Region) => call<void>("region_update", { region }),
+  /** Delete a region (its take is untouched). */
+  deleteRegion: (id: string) => call<void>("region_delete", { id }),
+  /** Import existing WAVs onto the timeline as a new take. */
+  importTakes: (paths: string[]) =>
+    call<TimelineSnapshot>("take_import", { paths }),
+};
+
 // ── Export ───────────────────────────────────────────────────────────────────
 
 export const exporter = {
@@ -171,4 +208,4 @@ export const exporter = {
 };
 
 /** Bundled namespace for ergonomic imports. */
-export const ipc = { app, audio, project, dsp, exporter };
+export const ipc = { app, audio, project, dsp, edit, exporter };

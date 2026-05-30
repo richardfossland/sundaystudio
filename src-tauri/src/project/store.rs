@@ -15,7 +15,7 @@ use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
-use super::model::{Marker, Project, ProjectSnapshot, Region, Take, Track};
+use super::model::{Marker, Project, ProjectSnapshot, Region, Take, TimelineSnapshot, Track};
 use crate::error::{AppError, AppResult};
 
 /// Epoch milliseconds as f64 (matches the model's time fields).
@@ -356,6 +356,63 @@ pub async fn list_regions(pool: &SqlitePool, target_track_id: &str) -> AppResult
     .await?)
 }
 
+/// All regions in the project, across every track, in timeline order. The editor
+/// loads the whole timeline at once; regions reach the project through their
+/// target track (`region.target_track_id → track.project_id`).
+pub async fn list_project_regions(pool: &SqlitePool, project_id: &str) -> AppResult<Vec<Region>> {
+    Ok(sqlx::query_as::<_, Region>(
+        "SELECT region.* FROM region
+         JOIN track ON region.target_track_id = track.id
+         WHERE track.project_id = ?
+         ORDER BY region.position_in_timeline_ms",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Persist every mutable field of a region (the editor's move/trim/fade/gain
+/// edits all flow through here, mirroring `update_track`). The non-destructive
+/// promise holds: only the region row changes — the take's WAV is never touched.
+pub async fn update_region(pool: &SqlitePool, r: &Region) -> AppResult<()> {
+    let affected = sqlx::query(
+        "UPDATE region SET
+           take_id = ?, source_track_id = ?, target_track_id = ?,
+           start_in_take_ms = ?, end_in_take_ms = ?, position_in_timeline_ms = ?,
+           fade_in_ms = ?, fade_out_ms = ?, gain_adjust_db = ?
+         WHERE id = ?",
+    )
+    .bind(&r.take_id)
+    .bind(&r.source_track_id)
+    .bind(&r.target_track_id)
+    .bind(r.start_in_take_ms)
+    .bind(r.end_in_take_ms)
+    .bind(r.position_in_timeline_ms)
+    .bind(r.fade_in_ms)
+    .bind(r.fade_out_ms)
+    .bind(r.gain_adjust_db)
+    .bind(&r.id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    if affected == 0 {
+        return Err(AppError::NotFound {
+            entity: "region",
+            id: r.id.clone(),
+        });
+    }
+    Ok(())
+}
+
+/// Remove a region (deleting a clip from the timeline; the source take is kept).
+pub async fn delete_region(pool: &SqlitePool, id: &str) -> AppResult<()> {
+    sqlx::query("DELETE FROM region WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 // ── Snapshot ──────────────────────────────────────────────────────────────────
 
 /// Load the project plus its tracks and markers in one go.
@@ -368,6 +425,13 @@ pub async fn load_snapshot(pool: &SqlitePool) -> AppResult<ProjectSnapshot> {
         tracks,
         markers,
     })
+}
+
+/// Load the project's takes and all their placed regions (the editor timeline).
+pub async fn load_timeline(pool: &SqlitePool, project_id: &str) -> AppResult<TimelineSnapshot> {
+    let takes = list_takes(pool, project_id).await?;
+    let regions = list_project_regions(pool, project_id).await?;
+    Ok(TimelineSnapshot { takes, regions })
 }
 
 #[cfg(test)]
@@ -514,6 +578,97 @@ mod tests {
         assert_eq!(markers[0].label, "Chapter 1");
         delete_marker(&pool, &m1.id).await.unwrap();
         assert_eq!(list_markers(&pool, &p.id).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn region_update_delete_and_project_listing() {
+        let (_d, pool) = temp_pool().await;
+        let p = create_project(&pool, "P", 48_000, 1).await.unwrap();
+        let t0 = add_track(&pool, &p.id, "A", "#fff").await.unwrap();
+        let t1 = add_track(&pool, &p.id, "B", "#000").await.unwrap();
+        let take = add_take(&pool, &p.id, now_ms(), 2000.0, std::slice::from_ref(&t0.id))
+            .await
+            .unwrap();
+
+        let r0 = add_region(
+            &pool,
+            Region {
+                id: String::new(),
+                take_id: take.id.clone(),
+                source_track_id: t0.id.clone(),
+                target_track_id: t1.id.clone(),
+                start_in_take_ms: 0.0,
+                end_in_take_ms: 1000.0,
+                position_in_timeline_ms: 500.0,
+                fade_in_ms: 5.0,
+                fade_out_ms: 5.0,
+                gain_adjust_db: 0.0,
+            },
+        )
+        .await
+        .unwrap();
+
+        // A region reaches the project through its target track, across tracks.
+        let all = list_project_regions(&pool, &p.id).await.unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].id, r0.id);
+
+        // Move + trim + gain via update.
+        let mut edited = r0.clone();
+        edited.position_in_timeline_ms = 1200.0;
+        edited.end_in_take_ms = 800.0;
+        edited.gain_adjust_db = -3.0;
+        update_region(&pool, &edited).await.unwrap();
+        let reloaded = list_regions(&pool, &t1.id).await.unwrap();
+        assert_eq!(reloaded[0].position_in_timeline_ms, 1200.0);
+        assert_eq!(reloaded[0].end_in_take_ms, 800.0);
+        assert_eq!(reloaded[0].gain_adjust_db, -3.0);
+
+        // Updating a ghost region errors.
+        let mut ghost = r0.clone();
+        ghost.id = "nope".into();
+        assert!(update_region(&pool, &ghost).await.is_err());
+
+        // Delete removes the region but keeps the take.
+        delete_region(&pool, &r0.id).await.unwrap();
+        assert!(list_project_regions(&pool, &p.id).await.unwrap().is_empty());
+        assert_eq!(list_takes(&pool, &p.id).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn timeline_bundles_takes_and_regions() {
+        let (_d, pool) = temp_pool().await;
+        let p = create_project(&pool, "P", 48_000, 1).await.unwrap();
+        let track = add_track(&pool, &p.id, "T", "#fff").await.unwrap();
+        let take = add_take(
+            &pool,
+            &p.id,
+            now_ms(),
+            1000.0,
+            std::slice::from_ref(&track.id),
+        )
+        .await
+        .unwrap();
+        add_region(
+            &pool,
+            Region {
+                id: String::new(),
+                take_id: take.id.clone(),
+                source_track_id: track.id.clone(),
+                target_track_id: track.id.clone(),
+                start_in_take_ms: 0.0,
+                end_in_take_ms: 1000.0,
+                position_in_timeline_ms: 0.0,
+                fade_in_ms: 5.0,
+                fade_out_ms: 5.0,
+                gain_adjust_db: 0.0,
+            },
+        )
+        .await
+        .unwrap();
+        let timeline = load_timeline(&pool, &p.id).await.unwrap();
+        assert_eq!(timeline.takes.len(), 1);
+        assert_eq!(timeline.regions.len(), 1);
     }
 
     #[tokio::test]

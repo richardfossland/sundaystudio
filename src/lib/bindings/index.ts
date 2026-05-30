@@ -20,6 +20,8 @@ export type { Take } from "./Take";
 export type { Region } from "./Region";
 export type { Marker } from "./Marker";
 export type { ProjectSnapshot } from "./ProjectSnapshot";
+export type { TimelineSnapshot } from "./TimelineSnapshot";
+export type { WaveformPeaks } from "./WaveformPeaks";
 export type { RecentProject } from "./RecentProject";
 export type { TemplateInfo } from "./TemplateInfo";
 export type { TemplateTrackInfo } from "./TemplateTrackInfo";
