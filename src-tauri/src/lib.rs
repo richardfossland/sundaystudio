@@ -36,12 +36,39 @@ pub fn run() {
         .with_target(false)
         .init();
 
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(commands::project::ProjectState::default())
-        .setup(|_app| {
+        .manage(commands::project::ProjectState::default());
+
+    // The `sundaystudio://import` deep link is desktop-only (the scheme itself
+    // is registered by the bundler from `tauri.conf.json` → plugins.deep-link).
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_deep_link::init());
+    }
+
+    builder
+        .setup(|app| {
             tracing::info!("SundayStudio backend ready");
+            // Sunday-link RECEIVER: forward an inbound `sundaystudio://import?…`
+            // URL (SundayRec → Studio handoff) to the renderer, which validates
+            // it via `deeplink_parse_import` and drives the take import.
+            // HARDWARE-UNVERIFIED: compiles + wired, but the OS-level scheme
+            // dispatch has not been exercised on a real macOS/Windows install.
+            #[cfg(desktop)]
+            {
+                use tauri::Emitter;
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        let _ = handle.emit("deep-link://import", url.to_string());
+                    }
+                });
+            }
+            let _ = app;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -78,6 +105,7 @@ pub fn run() {
             commands::edit::region_update,
             commands::edit::region_delete,
             commands::edit::take_import,
+            commands::deeplink::deeplink_parse_import,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

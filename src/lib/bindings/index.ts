@@ -37,6 +37,7 @@ export type { ExportFormat } from "./ExportFormat";
 export type { ExportPresetInfo } from "./ExportPresetInfo";
 export type { ExportResult } from "./ExportResult";
 export type { FadeShape } from "./FadeShape";
+export type { ImportRequest } from "./ImportRequest";
 
 /** Error shape returned by every Tauri command (see error.rs).
  *  Keep this union in sync with `AppError::code()` in Rust. */

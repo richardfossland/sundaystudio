@@ -4,4 +4,6 @@
 //! Planned: `db` (SQLite pool + migrations, Phase 2.1), `account` (Sunday OAuth,
 //! Phase 8), `quota` (AI generation tracking, Phase 6.2).
 //!
-//! Empty in Phase 0.1.
+//!   - `deeplink` — `sundaystudio://import` RECEIVER for the Rec → Studio handoff.
+
+pub mod deeplink;

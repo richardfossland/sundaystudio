@@ -7,6 +7,7 @@
 
 pub mod app;
 pub mod audio;
+pub mod deeplink;
 pub mod dsp;
 pub mod edit;
 pub mod export;

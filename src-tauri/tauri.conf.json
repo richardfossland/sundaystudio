@@ -23,6 +23,13 @@
       "csp": null
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["sundaystudio"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
