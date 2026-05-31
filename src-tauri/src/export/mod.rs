@@ -10,5 +10,6 @@
 //! Native WAV output is complete and clip-safe today; the lossy formats carry
 //! `requires_encoder = true` until the sidecar is wired.
 
+pub mod fade;
 pub mod format;
 pub mod render;
