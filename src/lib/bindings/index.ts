@@ -15,6 +15,7 @@ export type { AudioSettings } from "./AudioSettings";
 export type { LatencyEstimate } from "./LatencyEstimate";
 export type { LatencyZone } from "./LatencyZone";
 export type { Project } from "./Project";
+export type { ProjectMeta } from "./ProjectMeta";
 export type { Track } from "./Track";
 export type { Take } from "./Take";
 export type { Region } from "./Region";
@@ -42,6 +43,6 @@ export type { ImportRequest } from "./ImportRequest";
 /** Error shape returned by every Tauri command (see error.rs).
  *  Keep this union in sync with `AppError::code()` in Rust. */
 export interface AppError {
-  code: "not_found" | "validation" | "audio" | "io" | "json" | "internal";
+  code: "not_found" | "validation" | "audio" | "database" | "io" | "json" | "internal";
   message: string;
 }

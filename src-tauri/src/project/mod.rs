@@ -9,6 +9,7 @@
 //! open database, load snapshot). Both are async (SQLite via sqlx) and tested.
 
 pub mod model;
+pub mod registry;
 pub mod scast;
 pub mod store;
 pub mod templates;

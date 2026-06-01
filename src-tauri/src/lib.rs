@@ -91,6 +91,12 @@ pub fn run() {
             commands::project::track_delete,
             commands::project::marker_add,
             commands::project::marker_delete,
+            // Phase 2.1 registry CRUD
+            commands::project::project_new,
+            commands::project::project_save,
+            commands::project::project_load,
+            commands::project::project_list,
+            commands::project::project_delete,
             commands::dsp::dsp_presets,
             commands::dsp::dsp_loudness_targets,
             commands::dsp::dsp_master_presets,

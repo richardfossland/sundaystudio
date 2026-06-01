@@ -26,6 +26,7 @@ import type {
   MasterPresetInfo,
   PresetInfo,
   Project,
+  ProjectMeta,
   ProjectSnapshot,
   RecentProject,
   Region,
@@ -148,6 +149,28 @@ export const project = {
     call<Marker>("marker_add", { positionMs, label, color }),
   /** Delete a marker. */
   deleteMarker: (id: string) => call<void>("marker_delete", { id }),
+
+  // ── Phase 2.1 registry CRUD ───────────────────────────────────────────────
+
+  /** Create a new project in the app data dir (no file dialog) and register it.
+   *  Returns the registry entry. Use `project.snapshot()` to get full details. */
+  new: (name: string) => call<ProjectMeta>("project_new", { name }),
+
+  /** Persist a project's mutable metadata (name) to the registry.
+   *  Call after renaming to keep the registry entry in sync. */
+  save: (registryId: string, name: string) =>
+    call<ProjectMeta>("project_save", { registryId, name }),
+
+  /** Open a registered project by its registry id and make it current.
+   *  Returns the registry entry; follow with `project.snapshot()` for details. */
+  load: (registryId: string) =>
+    call<ProjectMeta>("project_load", { registryId }),
+
+  /** List all registered projects, most-recently created first. */
+  list: () => call<ProjectMeta[]>("project_list"),
+
+  /** Remove a project from the registry (the .scast folder is kept on disk). */
+  delete: (registryId: string) => call<void>("project_delete", { registryId }),
 };
 
 // ── DSP ──────────────────────────────────────────────────────────────────────

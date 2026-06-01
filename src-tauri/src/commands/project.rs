@@ -15,6 +15,7 @@ use tokio::sync::Mutex;
 
 use crate::error::{AppError, AppResult};
 use crate::project::model::{Marker, Project, ProjectSnapshot, RecentProject, Track};
+use crate::project::registry::{self as reg, ProjectMeta};
 use crate::project::templates::{self, TemplateInfo};
 use crate::project::{self, scast, store};
 
@@ -191,6 +192,142 @@ pub async fn marker_delete(state: State<'_, ProjectState>, id: String) -> AppRes
     let guard = state.current.lock().await;
     let op = current(&guard)?;
     store::delete_marker(&op.pool, &id).await
+}
+
+// ── Phase 2.1: registry-level CRUD ───────────────────────────────────────────
+//
+// These five commands form the "New / Save / Load / List / Delete" surface that
+// lets the UI manage projects without a file dialog (useful for programmatic
+// project creation, testing, and the home screen).
+//
+// They delegate to `project::registry` (metadata index) and `project::*`
+// (per-project SQLite + folder). The registry stores a lightweight `ProjectMeta`
+// for each project so `project_list` never has to open every `.scast` file.
+
+/// Create a brand-new project in `<data_dir>/projects/<name>.scast` and
+/// register it. Returns the created project's metadata entry.
+///
+/// This is the no-dialog companion to `project_create_from_template`: useful
+/// for programmatic creation (onboarding, tests, deep links).
+#[tauri::command]
+pub async fn project_new(
+    app: AppHandle,
+    state: State<'_, ProjectState>,
+    name: String,
+) -> AppResult<ProjectMeta> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(AppError::Validation("project name cannot be empty".into()));
+    }
+    // Place new projects in `<app_data_dir>/projects/`.
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| AppError::Internal(format!("resolving data dir: {e}")))?
+        .join("projects");
+
+    // Sanitise the folder name (replace file-system-unsafe chars with '_').
+    let safe: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == ' ' { c } else { '_' })
+        .collect();
+    let scast_dir = data_dir.join(format!("{safe}.scast"));
+
+    let (pool, project) = project::create(&scast_dir, &name, 48_000, 2).await?;
+
+    // Register in the app-level index.
+    let cfg = config_dir(&app)?;
+    let meta = reg::register(&cfg, &project.name, &scast_dir)?;
+
+    // Also add to the recent list so `project_recent` stays consistent.
+    record_recent(&app, &project.name, &scast_dir)?;
+
+    // Make it the current open project.
+    *state.current.lock().await = Some(OpenProject {
+        pool,
+        scast_dir,
+        project_id: project.id,
+    });
+
+    Ok(meta)
+}
+
+/// Persist the current project's mutable metadata (name) to the registry.
+/// The per-project SQLite is already auto-saved; this command updates the
+/// registry entry so `project_list` reflects the latest name.
+///
+/// Mirrors the "save" intent: call this after a rename to keep the registry
+/// in sync with the project's internal state.
+#[tauri::command]
+pub async fn project_save(
+    app: AppHandle,
+    state: State<'_, ProjectState>,
+    registry_id: String,
+    name: String,
+) -> AppResult<ProjectMeta> {
+    // Rename inside the project's own database first.
+    {
+        let guard = state.current.lock().await;
+        let op = current(&guard)?;
+        store::rename_project(&op.pool, &op.project_id, &name).await?;
+    }
+    // Then update the registry entry.
+    let cfg = config_dir(&app)?;
+    reg::update_meta(&cfg, &registry_id, &name)
+}
+
+/// Load a project from the registry by its registry id and make it current.
+/// Returns a `ProjectMeta` so the caller knows the resolved path and name;
+/// use `project_snapshot` afterwards to get the full project + tracks.
+#[tauri::command]
+pub async fn project_load(
+    app: AppHandle,
+    state: State<'_, ProjectState>,
+    registry_id: String,
+) -> AppResult<ProjectMeta> {
+    let cfg = config_dir(&app)?;
+    let meta = reg::find(&cfg, &registry_id)?;
+    let scast_dir = PathBuf::from(&meta.path);
+    let (pool, snapshot) = project::open(&scast_dir).await?;
+    record_recent(&app, &snapshot.project.name, &scast_dir)?;
+    *state.current.lock().await = Some(OpenProject {
+        pool,
+        scast_dir,
+        project_id: snapshot.project.id.clone(),
+    });
+    Ok(meta)
+}
+
+/// List all registered projects (most-recently created first).
+/// This is fast: it reads only the registry JSON, never opens a `.scast` file.
+#[tauri::command]
+pub async fn project_list(app: AppHandle) -> AppResult<Vec<ProjectMeta>> {
+    let cfg = config_dir(&app)?;
+    Ok(reg::load_all(&cfg))
+}
+
+/// Remove a project from the registry by its registry id.
+/// The `.scast` folder on disk is NOT deleted — the user keeps their audio.
+#[tauri::command]
+pub async fn project_delete(
+    app: AppHandle,
+    state: State<'_, ProjectState>,
+    registry_id: String,
+) -> AppResult<()> {
+    let cfg = config_dir(&app)?;
+    let meta = reg::find(&cfg, &registry_id)?;
+
+    // If this project is currently open, close it.
+    {
+        let mut guard = state.current.lock().await;
+        if let Some(op) = guard.as_ref() {
+            if op.scast_dir == Path::new(&meta.path) {
+                guard.take();
+            }
+        }
+    }
+
+    reg::remove(&cfg, &registry_id)
 }
 
 /// Borrow the open project or return a clear "no project open" error.

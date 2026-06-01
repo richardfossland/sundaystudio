@@ -1,16 +1,19 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
   CircleDot,
   FileAudio,
+  FolderOpen,
   Gauge,
   Loader2,
   Mic,
+  PlusCircle,
   Radio,
   Sliders,
+  Trash2,
   Volume2,
 } from "lucide-react";
 
@@ -20,6 +23,7 @@ import { ipc } from "@/lib/ipc";
 import type {
   AudioDevice,
   LoudnessMeasurement,
+  ProjectMeta,
   ToneResult,
 } from "@/lib/bindings";
 
@@ -32,8 +36,12 @@ function fmtDb(value: number | null, unit: string): string {
  * Diagnostics screen — the original "Hello SundayStudio" smoke checks, kept as
  * a dev/support tool reachable from the Start screen. Confirms the Rust ↔ React
  * bridge, lists audio devices (cpal), and writes a test-tone WAV to disk (hound).
+ *
+ * Phase 2.1: also surfaces the project registry (new / open / delete) so the
+ * full project lifecycle is exercisable from this screen during development.
  */
 export function HomePage({ onBack }: { onBack?: () => void }) {
+  const queryClient = useQueryClient();
   const info = useQuery({ queryKey: ["app_info"], queryFn: ipc.app.info });
   const devices = useQuery({
     queryKey: ["audio_devices"],
@@ -56,6 +64,15 @@ export function HomePage({ onBack }: { onBack?: () => void }) {
     queryFn: ipc.exporter.presets,
   });
 
+  // Phase 2.1: project registry
+  const projects = useQuery({
+    queryKey: ["project_list"],
+    queryFn: ipc.project.list,
+  });
+  const [newName, setNewName] = useState("");
+  const [projectBusy, setProjectBusy] = useState(false);
+  const [projectError, setProjectError] = useState<string | null>(null);
+
   const [tone, setTone] = useState<ToneResult | null>(null);
   const [toneError, setToneError] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
@@ -63,6 +80,47 @@ export function HomePage({ onBack }: { onBack?: () => void }) {
   const [loudness, setLoudness] = useState<LoudnessMeasurement | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+
+  async function handleNewProject() {
+    const name = newName.trim() || "Untitled Podcast";
+    setProjectBusy(true);
+    setProjectError(null);
+    try {
+      await ipc.project.new(name);
+      setNewName("");
+      await queryClient.invalidateQueries({ queryKey: ["project_list"] });
+    } catch (err) {
+      setProjectError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setProjectBusy(false);
+    }
+  }
+
+  async function handleLoadProject(meta: ProjectMeta) {
+    setProjectBusy(true);
+    setProjectError(null);
+    try {
+      await ipc.project.load(meta.id);
+      await queryClient.invalidateQueries({ queryKey: ["project_list"] });
+    } catch (err) {
+      setProjectError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setProjectBusy(false);
+    }
+  }
+
+  async function handleDeleteProject(meta: ProjectMeta) {
+    setProjectBusy(true);
+    setProjectError(null);
+    try {
+      await ipc.project.delete(meta.id);
+      await queryClient.invalidateQueries({ queryKey: ["project_list"] });
+    } catch (err) {
+      setProjectError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setProjectBusy(false);
+    }
+  }
 
   async function recordTestTone() {
     setRecording(true);
@@ -109,6 +167,95 @@ export function HomePage({ onBack }: { onBack?: () => void }) {
           )}
         </div>
       </header>
+
+      {/* Phase 2.1: Project registry — new / open / delete */}
+      <section className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">
+        <h2 className="mb-1 text-ui-md font-semibold">Projects</h2>
+        <p className="mb-4 text-ui-sm text-[var(--color-fg-muted)]">
+          Create a new project or reopen a registered one.
+        </p>
+
+        {/* New project row */}
+        <div className="mb-4 flex items-center gap-2">
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleNewProject()}
+            placeholder="Project name…"
+            className="flex-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-3 py-1.5 text-ui-sm outline-none focus:border-[var(--color-accent)]"
+          />
+          <Button
+            variant="accent"
+            size="sm"
+            onClick={handleNewProject}
+            disabled={projectBusy}
+          >
+            {projectBusy ? (
+              <Loader2 size={15} className="animate-spin" />
+            ) : (
+              <PlusCircle size={15} />
+            )}
+            New
+          </Button>
+        </div>
+
+        {projectError && (
+          <div className="mb-3 flex items-start gap-2 rounded-[var(--radius-md)] bg-[var(--color-bg-surface)] p-2 text-ui-xs text-[var(--color-danger)]">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <span className="break-all">{projectError}</span>
+          </div>
+        )}
+
+        {/* Project list */}
+        {projects.isSuccess && projects.data.length > 0 ? (
+          <ul className="flex flex-col gap-1.5">
+            {projects.data.map((meta) => (
+              <li
+                key={meta.id}
+                className="flex items-center justify-between gap-2 rounded-[var(--radius-sm)] bg-[var(--color-bg-surface)] px-3 py-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-ui-sm font-medium">
+                    {meta.name}
+                  </div>
+                  <div className="truncate font-mono text-[11px] text-[var(--color-fg-muted)]">
+                    {meta.path}
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleLoadProject(meta)}
+                    disabled={projectBusy}
+                    aria-label={`Open ${meta.name}`}
+                  >
+                    <FolderOpen size={14} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDeleteProject(meta)}
+                    disabled={projectBusy}
+                    aria-label={`Remove ${meta.name} from registry`}
+                  >
+                    <Trash2 size={14} />
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <Muted>
+            {projects.isError
+              ? "Project list loads when running in the SundayStudio app."
+              : projects.isPending
+                ? "Loading…"
+                : "No projects yet — create one above."}
+          </Muted>
+        )}
+      </section>
 
       {/* Backend identity */}
       <section className="rounded-[var(--radius-lg)] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-5">
