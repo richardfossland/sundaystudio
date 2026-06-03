@@ -5,15 +5,20 @@
  * submitted) shows the computed `JingleRenderPlan` so the user can see exactly
  * what ffmpeg will do before any Suno call is made.
  *
- * The "Generate jingle" button is intentionally disabled with a Pro notice —
- * the form's job is spec authoring + plan preview, which is free.
+ * The "Generate jingle" button calls the `ai_jingle_generate` command, which
+ * fronts the music-generation service (Suno, via an Edge Function wrapper).
+ * Generation is a Sunday Cast Pro feature: when the backend isn't configured
+ * with `SUNO_PROXY_URL` the command returns a clean validation error, which we
+ * surface inline. The render plan (below) stays free to preview either way.
  */
 
 import { useState } from "react";
-import { ChevronDown, Music, Sparkles, Wand2 } from "lucide-react";
+import { ChevronDown, Loader2, Music, Sparkles, Wand2 } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
+import { ipc } from "@/lib/ipc";
 import { useI18n } from "@/lib/i18n";
+import type { JingleResult } from "@/lib/bindings";
 import {
   jingle_render_plan,
   validateJingleSpec,
@@ -45,6 +50,11 @@ export function JingleSpecForm() {
   const [showPlan, setShowPlan] = useState(false);
   const [submitted, setSubmitted] = useState(false);
 
+  // AI generation state
+  const [generating, setGenerating] = useState(false);
+  const [result, setResult] = useState<JingleResult | null>(null);
+  const [genError, setGenError] = useState<string | null>(null);
+
   // Derive instruments from raw string on every change
   function updateInstrRaw(raw: string) {
     setInstrRaw(raw);
@@ -73,6 +83,22 @@ export function JingleSpecForm() {
     const computed = jingle_render_plan(spec);
     setPlan(computed);
     setShowPlan(true);
+  }
+
+  async function handleGenerate() {
+    setSubmitted(true);
+    if (!validation.ok) return;
+    setGenerating(true);
+    setGenError(null);
+    setResult(null);
+    try {
+      const generated = await ipc.ai.generateJingle(spec);
+      setResult(generated);
+    } catch (e) {
+      setGenError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setGenerating(false);
+    }
   }
 
   const patch = <K extends keyof JingleSpec>(k: K, v: JingleSpec[K]) =>
@@ -219,14 +245,60 @@ export function JingleSpecForm() {
           <Wand2 size={15} />
           {t("jinglePreviewPlan")}
         </Button>
-        <Button variant="accent" disabled title={t("jingleProNotice")}>
-          <Sparkles size={15} />
-          {t("jingleGenerateButton")}
+        <Button
+          variant="accent"
+          onClick={handleGenerate}
+          disabled={generating}
+          title={t("jingleProNotice")}
+        >
+          {generating ? (
+            <Loader2 size={15} className="animate-spin" />
+          ) : (
+            <Sparkles size={15} />
+          )}
+          {generating ? t("jingleGenerating") : t("jingleGenerateButton")}
         </Button>
         <span className="text-ui-xs text-[var(--color-fg-muted)]">
           {t("jingleProNotice")}
         </span>
       </div>
+
+      {/* Generation error */}
+      {genError && (
+        <p
+          role="alert"
+          className="mt-4 rounded-[var(--radius-md)] border border-[var(--color-danger)] bg-[var(--color-bg-elevated)] px-3 py-2 text-ui-sm text-[var(--color-danger)]"
+        >
+          {t("jingleGenerateError")}: {genError}
+        </p>
+      )}
+
+      {/* Generated jingle */}
+      {result && (
+        <section className="mt-8 space-y-4 rounded-[var(--radius-lg)] border border-[var(--color-accent)] bg-[var(--color-bg-elevated)] p-5">
+          <h2 className="flex items-center gap-2 text-ui-md font-semibold">
+            <Sparkles size={16} className="text-[var(--color-accent)]" />
+            {t("jingleResultTitle")}
+          </h2>
+          <dl className="space-y-2 text-ui-sm">
+            <PlanRow label={t("jinglePlanTitle")}>{result.title}</PlanRow>
+            <PlanRow label={t("jingleResultModel")}>{result.model}</PlanRow>
+            <PlanRow label={t("jingleResultDuration")}>
+              {result.duration_sec}s
+            </PlanRow>
+            <PlanRow label={t("jingleResultAudio")}>
+              <a
+                href={result.audio_url}
+                target="_blank"
+                rel="noreferrer"
+                className="break-all font-mono text-ui-xs text-[var(--color-accent)] underline"
+              >
+                {result.audio_url}
+              </a>
+            </PlanRow>
+          </dl>
+        </section>
+      )}
 
       {/* Render plan display */}
       {plan && showPlan && (

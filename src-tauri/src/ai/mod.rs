@@ -19,6 +19,7 @@
 //!   `tokio::task::spawn_blocking` from the command layer: AI is network I/O,
 //!   not real-time, so it stays off both the async runtime and the audio thread.
 
+pub mod jingle;
 pub mod leveling;
 
 /// The Anthropic API key, read from the environment. `None` (the common case in

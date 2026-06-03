@@ -14,6 +14,7 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
 use ts_rs::TS;
 
+use crate::ai::jingle::{self, JingleResult, JingleSpec};
 use crate::ai::leveling::{self, LevelingResult, LevelingSnapshot, LevelingTrack};
 use crate::ai::{self, ReqwestTransport};
 use crate::audio::playback::{self, PlaybackController, PlaybackTrack};
@@ -484,6 +485,48 @@ pub async fn ai_auto_level(project: State<'_, ProjectState>) -> AppResult<Leveli
     })
     .await
     .map_err(|e| AppError::Internal(format!("auto-level task failed: {e}")))?
+}
+
+/// AI jingle generation (Phase 6, Pro) — the product's headline "wow" feature.
+///
+/// Takes a [`JingleSpec`] from the form and asks the music-generation wrapper
+/// (an Edge Function fronting Suno, so the vendor key never reaches the client)
+/// for a finished jingle, returning the generated audio's URL plus metadata for
+/// the renderer to download and mix.
+///
+/// The network call is opt-in and gated: it needs a `SUNO_PROXY_URL` (Free tier
+/// / unconfigured returns a clean validation error). The blocking HTTP call runs
+/// on `spawn_blocking` — generation is network I/O, never real-time, and never
+/// touches the audio thread.
+#[tauri::command]
+pub async fn ai_jingle_generate(spec: JingleSpec) -> AppResult<JingleResult> {
+    let proxy_url = jingle::suno_proxy_url().ok_or_else(|| {
+        AppError::Validation(
+            "Jingle generation needs the music-generation service to be configured (set SUNO_PROXY_URL). It's a Sunday Cast Pro feature.".into(),
+        )
+    })?;
+
+    // Re-validate server-side rather than trusting the form — a malformed
+    // payload surfaces as a validation error before we spend a generation.
+    let errors = jingle::validate_spec(&spec);
+    if !errors.is_empty() {
+        let joined = errors
+            .iter()
+            .map(|e| format!("{}: {}", e.field, e.message))
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(AppError::Validation(format!(
+            "invalid jingle spec — {joined}"
+        )));
+    }
+
+    // Generation is blocking network I/O; keep it off the async runtime.
+    tokio::task::spawn_blocking(move || {
+        jingle::generate_jingle(&ReqwestTransport, &proxy_url, &spec)
+            .map_err(|e| AppError::Internal(format!("jingle generation failed: {e}")))
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("jingle task failed: {e}")))?
 }
 
 #[cfg(test)]

@@ -43,6 +43,7 @@ export type { LevelingTrack } from "./LevelingTrack";
 export type { LevelingSnapshot } from "./LevelingSnapshot";
 export type { LevelingSuggestion } from "./LevelingSuggestion";
 export type { LevelingResult } from "./LevelingResult";
+export type { JingleResult } from "./JingleResult";
 
 /** Error shape returned by every Tauri command (see error.rs).
  *  Keep this union in sync with `AppError::code()` in Rust. */
