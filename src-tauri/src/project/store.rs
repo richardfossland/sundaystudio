@@ -30,6 +30,13 @@ fn new_id() -> String {
     Uuid::now_v7().to_string()
 }
 
+/// Generate a fresh entity id (UUID v7). Exposed so the recorder can mint a take
+/// id up front — the live capture writes its WAVs into that take's dir before the
+/// take row is inserted at stop (see `add_take_with_id`).
+pub fn new_take_id() -> String {
+    new_id()
+}
+
 /// Open (creating if needed) the SQLite database at `db_path` and run all
 /// pending migrations. Foreign keys are enforced.
 pub async fn open_pool(db_path: &Path) -> AppResult<SqlitePool> {
@@ -274,8 +281,22 @@ pub async fn add_take(
     duration_ms: f64,
     source_tracks: &[String],
 ) -> AppResult<Take> {
+    add_take_with_id(pool, &new_id(), project_id, started_at, duration_ms, source_tracks).await
+}
+
+/// Insert a take row under an explicit id. The live recorder mints the id with
+/// [`new_take_id`] up front (so it can write the take's WAVs before stopping),
+/// then calls this on stop to record the take against that same dir.
+pub async fn add_take_with_id(
+    pool: &SqlitePool,
+    id: &str,
+    project_id: &str,
+    started_at: f64,
+    duration_ms: f64,
+    source_tracks: &[String],
+) -> AppResult<Take> {
     let take = Take {
-        id: new_id(),
+        id: id.to_string(),
         project_id: project_id.to_string(),
         started_at,
         duration_ms,

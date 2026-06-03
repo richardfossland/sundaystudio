@@ -41,7 +41,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::project::ProjectState::default())
-        .manage(commands::audio::MonitorControl::default())
+        .manage(commands::audio::RecorderControl::default())
         .manage(commands::audio::PlaybackControl::default());
 
     // The `sundaystudio://import` deep link is desktop-only (the scheme itself
@@ -82,6 +82,9 @@ pub fn run() {
             commands::audio::audio_latency_estimate,
             commands::audio::audio_set_monitoring,
             commands::audio::audio_set_monitor_mute,
+            commands::audio::audio_record_start,
+            commands::audio::audio_record_stop,
+            commands::audio::audio_record_status,
             commands::audio::audio_play_timeline,
             commands::audio::audio_play,
             commands::audio::audio_pause,

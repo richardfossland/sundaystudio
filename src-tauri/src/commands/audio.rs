@@ -18,7 +18,9 @@ use crate::ai::jingle::{self, JingleResult, JingleSpec};
 use crate::ai::leveling::{self, LevelingResult, LevelingSnapshot, LevelingTrack};
 use crate::ai::{self, ReqwestTransport};
 use crate::audio::playback::{self, PlaybackController, PlaybackTrack};
-use crate::audio::recorder::{CommandTx, RecorderCommand};
+use crate::audio::recorder::{
+    start_session, RecordConfig, RecordController, RecorderCommand, StreamHandle, TrackSpec,
+};
 use crate::audio::{devices, settings, tone};
 use crate::commands::project::{current, ProjectState};
 use crate::dsp::loudness;
@@ -26,41 +28,95 @@ use crate::error::{AppError, AppResult};
 use crate::export::render::{self, PlacedClip};
 use crate::project::{scast, store};
 
-/// Tauri-managed handle to the live recording session's control queue.
+/// A live recording session: the tested `RecordController` (rings + writer
+/// thread + meters) plus the `StreamHandle` that owns the `!Send` cpal input
+/// stream on its own thread, and the metadata we need to lay the captured WAVs
+/// onto the project timeline when the take ends.
 ///
-/// The monitor commands (`audio_set_monitoring`, `audio_set_monitor_mute`) flip
-/// state on the audio thread by enqueueing into this lock-free queue. A session
-/// installs its `CommandTx` here when it starts (Phase 2.2's live transport) and
-/// clears it on stop; until then the queue is absent and a monitor toggle is a
-/// no-op error the UI can surface ("start a recording to monitor").
-#[derive(Default)]
-pub struct MonitorControl {
-    pub(crate) commands: Mutex<Option<CommandTx>>,
+/// Kept together so `RecorderControl` can stop both halves in the right order
+/// (stream first → no more samples arrive → then drain + finalise the writer).
+struct RecorderSession {
+    controller: RecordController,
+    stream: StreamHandle,
+    take_id: String,
+    project_id: String,
+    scast_dir: PathBuf,
+    sample_rate: u32,
+    /// Project track ids this take captured into, channel order = track order.
+    /// These are also the per-track WAV filenames in the take dir.
+    track_ids: Vec<String>,
+    /// Wall-clock start (ms) for the take row.
+    started_at: f64,
 }
 
-impl MonitorControl {
-    /// Register the live session's command sender (called by the transport when
-    /// a session starts). Replacing any previous sender drops the old one.
-    pub async fn attach(&self, tx: CommandTx) {
-        *self.commands.lock().await = Some(tx);
+/// Tauri-managed handle to the live recording transport.
+///
+/// Mirrors [`PlaybackControl`]: `audio_record_start` resolves the input device,
+/// starts the tested session pipeline, opens the cpal input stream against it,
+/// and installs the [`RecorderSession`] here; `audio_record_stop` tears the
+/// stream + writer down and lays the captured audio onto the timeline;
+/// `audio_record_status` is what the UI polls (~60fps) for the recording state,
+/// the live take duration, per-channel meters and any overruns.
+///
+/// HARDWARE-UNVERIFIED: the session pipeline (rings → writer → WAVs → meters) is
+/// fully tested without a device (see `tests/recording_transport.rs`), but the
+/// cpal **input** stream that feeds it — opened by [`StreamHandle::spawn`] — is
+/// the one hardware-dependent piece, validated on real interfaces in Phase 2.2.
+#[derive(Default)]
+pub struct RecorderControl {
+    session: Mutex<Option<RecorderSession>>,
+}
+
+impl RecorderControl {
+    /// Is a take currently rolling?
+    async fn is_recording(&self) -> bool {
+        self.session.lock().await.is_some()
     }
 
-    /// Drop the command sender when the session ends.
-    pub async fn detach(&self) {
-        *self.commands.lock().await = None;
-    }
-
-    /// Enqueue a control command, erroring if no session is live or the queue is
-    /// momentarily full.
-    async fn send(&self, cmd: RecorderCommand) -> AppResult<()> {
-        let mut guard = self.commands.lock().await;
-        let tx = guard
+    /// Enqueue a control command for the live take's audio thread (monitoring /
+    /// monitor-mute). Errors cleanly if no take is rolling, or if the lock-free
+    /// command queue is momentarily full (the UI can retry).
+    async fn send_command(&self, cmd: RecorderCommand) -> AppResult<()> {
+        let mut guard = self.session.lock().await;
+        let session = guard
             .as_mut()
             .ok_or_else(|| AppError::Validation("no active recording session to monitor".into()))?;
-        if tx.send(cmd) {
+        if session.controller.send_command(cmd) {
             Ok(())
         } else {
             Err(AppError::Audio("monitor command queue full; retry".into()))
+        }
+    }
+}
+
+/// What the UI polls while the transport is wired: whether a take is rolling,
+/// the live captured-frame count (→ duration) and overruns, plus the per-channel
+/// peak meters in dBFS (one entry per captured channel).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../src/lib/bindings/RecordingStatus.ts")]
+pub struct RecordingStatus {
+    /// Whether a take is currently being captured.
+    pub recording: bool,
+    /// Frames captured so far (one per per-channel sample); 0 when idle.
+    pub captured_frames: f64,
+    /// Captured duration in milliseconds, derived from `captured_frames`.
+    pub duration_ms: f64,
+    /// Samples dropped to ring overruns so far (0 is healthy).
+    pub dropped: f64,
+    /// Per-channel peak in dBFS since the last poll (UI meters). Empty when idle.
+    pub meters_dbfs: Vec<f32>,
+}
+
+impl RecordingStatus {
+    /// The idle status (nothing recording) — what `audio_record_status` returns
+    /// when no take is rolling.
+    fn idle() -> Self {
+        RecordingStatus {
+            recording: false,
+            captured_frames: 0.0,
+            duration_ms: 0.0,
+            dropped: 0.0,
+            meters_dbfs: Vec::new(),
         }
     }
 }
@@ -112,35 +168,302 @@ pub fn audio_latency_estimate(
 }
 
 /// Turn low-latency software monitoring on or off (Phase 1.3). Enqueues a
-/// `SetMonitoring` for the audio thread, which starts/stops feeding the mono
-/// monitor mix to the output callback. Errors if no session is recording.
+/// `SetMonitoring` for the live take's audio thread, which starts/stops feeding
+/// the mono monitor mix to the output callback. Errors if no take is recording.
 #[tauri::command]
 pub async fn audio_set_monitoring(
-    control: State<'_, MonitorControl>,
+    recorder: State<'_, RecorderControl>,
     enabled: bool,
 ) -> AppResult<()> {
-    control.send(RecorderCommand::SetMonitoring(enabled)).await
+    recorder
+        .send_command(RecorderCommand::SetMonitoring(enabled))
+        .await
 }
 
 /// Mute/unmute one track in the monitor mix without affecting capture (Phase
-/// 1.3). `track_idx` is the input-channel index. Errors if no session is live.
+/// 1.3). `track_idx` is the input-channel index. Errors if no take is live.
 #[tauri::command]
 pub async fn audio_set_monitor_mute(
-    control: State<'_, MonitorControl>,
+    recorder: State<'_, RecorderControl>,
     track_idx: usize,
     muted: bool,
 ) -> AppResult<()> {
-    control
-        .send(RecorderCommand::SetMute {
+    recorder
+        .send_command(RecorderCommand::SetMute {
             track: track_idx,
             muted,
         })
         .await
 }
 
+/// Start recording the open project's tracks (Phase 2.2 transport).
+///
+/// Resolves the input device (None = host default), arms one capture track per
+/// existing project track (the channel→track map is 1:1 for now), starts the
+/// tested session pipeline, then opens the cpal input stream against it. The
+/// take owns the audio thread's command queue, so the monitoring commands
+/// (`audio_set_monitoring`, `audio_set_monitor_mute`) reach it through
+/// [`RecorderControl`]. Errors — including a missing device or an unsupported
+/// stream format — surface here, leaving nothing installed.
+///
+/// `device_name` is the OS device name from `audio_devices`; `channels` lets the
+/// caller capture more interleaved input channels than there are tracks (extra
+/// channels are dropped). When omitted it defaults to the project's track count.
+#[tauri::command]
+pub async fn audio_record_start(
+    project: State<'_, ProjectState>,
+    recorder: State<'_, RecorderControl>,
+    device_name: Option<String>,
+    channels: Option<u16>,
+) -> AppResult<RecordingStatus> {
+    if recorder.is_recording().await {
+        return Err(AppError::Validation(
+            "a recording is already in progress — stop it first".into(),
+        ));
+    }
+
+    // Snapshot what we need from the open project, then drop its lock before any
+    // blocking device work.
+    let (project_id, scast_dir, sample_rate, track_ids) = {
+        let guard = project.current.lock().await;
+        let op = current(&guard)?;
+        let proj = store::load_project(&op.pool).await?;
+        let tracks = store::list_tracks(&op.pool, &op.project_id).await?;
+        let ids: Vec<String> = tracks.into_iter().map(|t| t.id).collect();
+        (
+            op.project_id.clone(),
+            op.scast_dir.clone(),
+            proj.sample_rate as u32,
+            ids,
+        )
+    };
+
+    if track_ids.is_empty() {
+        return Err(AppError::Validation(
+            "add at least one track before recording".into(),
+        ));
+    }
+
+    // Capture as many channels as the caller asked for (default: one per track).
+    // Tracks beyond the channel count simply receive no audio this take.
+    let channel_count = channels.map(|c| c as usize).unwrap_or(track_ids.len());
+    let started_at = store::now_ms();
+    let take_id = store::new_take_id();
+    let take_dir = scast::take_dir(&scast_dir, &take_id);
+
+    // Pre-create the session: each capture track writes `<track_id>.wav` into the
+    // take dir, so the on-disk filenames line up with the project track ids the
+    // regions will reference (exactly as `import_takes` arranges them).
+    let session_track_ids: Vec<String> = (0..channel_count)
+        .map(|i| {
+            track_ids
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| format!("ch{i}"))
+        })
+        .collect();
+    let tracks: Vec<TrackSpec> = session_track_ids
+        .iter()
+        .map(|id| TrackSpec {
+            track_id: id.clone(),
+        })
+        .collect();
+
+    let config = RecordConfig {
+        take_dir: take_dir.clone(),
+        tracks,
+        channels: channel_count,
+        sample_rate,
+    };
+    // Start the (device-free) pipeline first; if this fails nothing is open yet.
+    let (sink, controller) = start_session(config)?;
+
+    // Open the cpal input stream against the sink on its own thread. On failure
+    // the controller (and its writer thread) is stopped so we leak nothing.
+    let stream = match StreamHandle::spawn(device_name, sample_rate, channel_count as u16, sink) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = controller.stop();
+            return Err(e);
+        }
+    };
+
+    let status = RecordingStatus {
+        recording: true,
+        captured_frames: controller.captured_frames() as f64,
+        duration_ms: 0.0,
+        dropped: controller.dropped() as f64,
+        meters_dbfs: vec![f32::NEG_INFINITY; channel_count],
+    };
+
+    *recorder.session.lock().await = Some(RecorderSession {
+        controller,
+        stream,
+        take_id,
+        project_id,
+        scast_dir,
+        sample_rate,
+        track_ids: session_track_ids,
+        started_at,
+    });
+
+    Ok(status)
+}
+
+/// Stop the live recording, finalise the WAVs, and lay the captured audio onto
+/// the timeline as a new take (one full-length region per non-empty track), then
+/// return the refreshed timeline. A clean no-op-style error if nothing is live.
+///
+/// Teardown order matters: stop the stream FIRST (so the audio thread stops
+/// pushing), THEN stop the writer thread (which does its final drain + finalise).
+#[tauri::command]
+pub async fn audio_record_stop(
+    project: State<'_, ProjectState>,
+    recorder: State<'_, RecorderControl>,
+) -> AppResult<crate::project::model::TimelineSnapshot> {
+    let session = recorder
+        .session
+        .lock()
+        .await
+        .take()
+        .ok_or_else(|| AppError::Validation("no recording in progress".into()))?;
+
+    let RecorderSession {
+        controller,
+        stream,
+        take_id,
+        project_id,
+        scast_dir,
+        sample_rate,
+        track_ids,
+        started_at,
+    } = session;
+
+    // Stop the device, then drain + finalise the writer for the per-track counts.
+    stream.stop()?;
+    let counts = controller.stop()?;
+
+    let guard = project.current.lock().await;
+    let op = current(&guard)?;
+    // Guard against the project having been swapped while recording.
+    if op.project_id != project_id {
+        return Err(AppError::Validation(
+            "the project changed while recording — the take was saved to disk but not placed".into(),
+        ));
+    }
+    let recorded = RecordedTake {
+        take_id,
+        sample_rate,
+        started_at,
+        track_ids,
+        counts,
+    };
+    persist_recorded_take(&op.pool, &scast_dir, &project_id, &recorded).await
+}
+
+/// A finished recording's bookkeeping: the id its WAVs were written under, the
+/// capture rate + wall-clock start, the armed track ids (channel order, also the
+/// per-track WAV filenames), and the per-track captured sample counts. Bundled so
+/// the persist seam below has a small, testable signature.
+pub struct RecordedTake {
+    /// Take id the live session wrote its WAVs under (also the take dir name).
+    pub take_id: String,
+    pub sample_rate: u32,
+    /// Wall-clock start (ms) for the take row.
+    pub started_at: f64,
+    /// Armed track ids, channel order; each is its `<id>.wav` filename.
+    pub track_ids: Vec<String>,
+    /// Captured frames per track (index = channel), from the writer's finalise.
+    pub counts: Vec<u64>,
+}
+
+/// Lay a finished recording onto the timeline: insert the take row under the id
+/// the live session wrote its WAVs under, then place one full-length region per
+/// track that captured a non-empty WAV (1:1 channel→track, like `import_takes`).
+/// Split out from the command so it can be exercised against a throwaway pool +
+/// temp `scast` dir with no device or Tauri state (see `tests/recording_transport.rs`).
+pub async fn persist_recorded_take(
+    pool: &sqlx::SqlitePool,
+    scast_dir: &std::path::Path,
+    project_id: &str,
+    recorded: &RecordedTake,
+) -> AppResult<crate::project::model::TimelineSnapshot> {
+    let RecordedTake {
+        take_id,
+        sample_rate,
+        started_at,
+        track_ids,
+        counts,
+    } = recorded;
+
+    // The take dir already holds one `<track_id>.wav` per capture track (written
+    // live by the writer thread); derive each track's length from its count.
+    let rate = (*sample_rate).max(1) as f64;
+    let durations: Vec<f64> = counts.iter().map(|&n| n as f64 / rate * 1000.0).collect();
+    let total_ms = durations.iter().cloned().fold(0.0_f64, f64::max);
+
+    // Record the take row against the tracks that were armed for this take.
+    store::add_take_with_id(pool, take_id, project_id, *started_at, total_ms, track_ids).await?;
+
+    // Place one full-length region per track that captured a non-empty WAV.
+    for (i, track_id) in track_ids.iter().enumerate() {
+        let samples = counts.get(i).copied().unwrap_or(0);
+        if samples == 0 {
+            continue; // an armed track that received no audio — no region
+        }
+        let wav = scast::take_dir(scast_dir, take_id).join(format!("{track_id}.wav"));
+        if !wav.exists() {
+            continue;
+        }
+        store::add_region(
+            pool,
+            crate::project::model::Region {
+                id: String::new(),
+                take_id: take_id.to_string(),
+                source_track_id: track_id.clone(),
+                target_track_id: track_id.clone(),
+                start_in_take_ms: 0.0,
+                end_in_take_ms: durations[i],
+                position_in_timeline_ms: 0.0,
+                fade_in_ms: 5.0,
+                fade_out_ms: 5.0,
+                gain_adjust_db: 0.0,
+            },
+        )
+        .await?;
+    }
+
+    store::load_timeline(pool, project_id).await
+}
+
+/// The recording transport state the UI polls (~60fps) to draw the record button,
+/// the live take duration, the meters and any overrun warning. Returns the idle
+/// status when no take is rolling — never errors.
+#[tauri::command]
+pub async fn audio_record_status(
+    recorder: State<'_, RecorderControl>,
+) -> AppResult<RecordingStatus> {
+    let guard = recorder.session.lock().await;
+    match guard.as_ref() {
+        Some(s) => {
+            let frames = s.controller.captured_frames();
+            let channels = s.track_ids.len();
+            let meters: Vec<f32> = (0..channels).map(|c| s.controller.meter_dbfs(c)).collect();
+            Ok(RecordingStatus {
+                recording: true,
+                captured_frames: frames as f64,
+                duration_ms: frames as f64 / s.sample_rate.max(1) as f64 * 1000.0,
+                dropped: s.controller.dropped() as f64,
+                meters_dbfs: meters,
+            })
+        }
+        None => Ok(RecordingStatus::idle()),
+    }
+}
+
 /// Tauri-managed handle to the live timeline-playback session.
 ///
-/// Mirrors [`MonitorControl`]: the transport commands (`audio_play`,
+/// Mirrors [`RecorderControl`]: the transport commands (`audio_play`,
 /// `audio_pause`, `audio_seek`, `audio_playback_mute`) drive the
 /// [`PlaybackController`] held here, and `audio_play_timeline` installs a fresh
 /// controller (replacing/stopping any previous one). Until a session is started
@@ -550,52 +873,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn monitor_command_errors_with_no_active_session() {
-        // No session attached → toggling monitoring is a clean validation error,
+    async fn monitor_command_errors_with_no_active_recording() {
+        // No take rolling → toggling monitoring is a clean validation error,
         // never a panic or a silent no-op.
-        let control = MonitorControl::default();
-        let err = control
-            .send(RecorderCommand::SetMonitoring(true))
+        let recorder = RecorderControl::default();
+        let err = recorder
+            .send_command(RecorderCommand::SetMonitoring(true))
             .await
             .unwrap_err();
         assert_eq!(err.code(), AppError::Validation(String::new()).code());
+        assert!(!recorder.is_recording().await);
     }
 
     #[tokio::test]
-    async fn attached_session_receives_monitor_commands() {
-        use crate::audio::recorder::command_channel;
-
-        let (tx, mut rx) = command_channel(8);
-        let control = MonitorControl::default();
-        control.attach(tx).await;
-
-        control
-            .send(RecorderCommand::SetMonitoring(true))
-            .await
-            .expect("monitoring enqueues");
-        control
-            .send(RecorderCommand::SetMute {
-                track: 1,
-                muted: true,
-            })
-            .await
-            .expect("mute enqueues");
-
-        assert_eq!(rx.try_recv(), Some(RecorderCommand::SetMonitoring(true)));
-        assert_eq!(
-            rx.try_recv(),
-            Some(RecorderCommand::SetMute {
-                track: 1,
-                muted: true
-            })
-        );
-
-        // After detach, commands error again.
-        control.detach().await;
-        assert!(control
-            .send(RecorderCommand::SetMonitoring(false))
-            .await
-            .is_err());
+    async fn record_status_is_idle_with_no_active_recording() {
+        // The status poll never errors; with nothing rolling it reports idle.
+        let recorder = RecorderControl::default();
+        let guard = recorder.session.lock().await;
+        assert!(guard.is_none());
+        let status = RecordingStatus::idle();
+        assert!(!status.recording);
+        assert_eq!(status.captured_frames, 0.0);
+        assert!(status.meters_dbfs.is_empty());
     }
 
     #[tokio::test]

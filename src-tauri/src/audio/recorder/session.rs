@@ -63,6 +63,10 @@ pub struct CaptureSink {
     producers: Vec<Producer<f32>>,
     meters: Arc<PeakMeters>,
     dropped: Arc<AtomicU64>,
+    /// Running count of frames pushed (one per interleaved frame, i.e. per
+    /// per-channel sample). The UI polls this through the controller to show the
+    /// take's live duration; real-time safe (one relaxed add per block).
+    captured_frames: Arc<AtomicU64>,
     channels: usize,
     /// Control commands from the UI (monitor on/off, per-track mute).
     commands: CommandRx,
@@ -98,6 +102,10 @@ impl CaptureSink {
         if ch == 0 {
             return;
         }
+        // One frame = one sample per channel; count frames so the live duration
+        // is channel-count-independent.
+        self.captured_frames
+            .fetch_add((data.len() / ch) as u64, Ordering::Relaxed);
         for c in 0..ch {
             let mut peak = 0.0_f32;
             let mut dropped = 0u64;
@@ -144,6 +152,9 @@ pub struct RecordController {
     shutdown: Arc<AtomicBool>,
     meters: Arc<PeakMeters>,
     dropped: Arc<AtomicU64>,
+    /// Live count of captured frames (shared with the sink), so the UI can show
+    /// the take's duration while recording without waiting for `stop`.
+    captured_frames: Arc<AtomicU64>,
     take_dir: PathBuf,
     /// UI→audio control queue (monitor/mute); the audio thread drains it.
     commands: CommandTx,
@@ -164,6 +175,12 @@ impl RecordController {
     /// Samples dropped to overruns so far (0 is healthy).
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
+    }
+
+    /// Frames captured so far (one per per-channel sample). The UI multiplies by
+    /// the sample period for the live take duration.
+    pub fn captured_frames(&self) -> u64 {
+        self.captured_frames.load(Ordering::Relaxed)
     }
 
     pub fn take_dir(&self) -> &Path {
@@ -259,6 +276,7 @@ pub fn start_session(config: RecordConfig) -> AppResult<(CaptureSink, RecordCont
 
     let meters = Arc::new(PeakMeters::new(config.channels));
     let dropped = Arc::new(AtomicU64::new(0));
+    let captured_frames = Arc::new(AtomicU64::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
 
     // UI→audio command queue (monitor/mute) and the shared monitor surface.
@@ -275,6 +293,7 @@ pub fn start_session(config: RecordConfig) -> AppResult<(CaptureSink, RecordCont
         producers,
         meters: Arc::clone(&meters),
         dropped: Arc::clone(&dropped),
+        captured_frames: Arc::clone(&captured_frames),
         channels: config.channels,
         commands: command_rx,
         monitor: Arc::clone(&monitor),
@@ -286,6 +305,7 @@ pub fn start_session(config: RecordConfig) -> AppResult<(CaptureSink, RecordCont
         shutdown,
         meters,
         dropped,
+        captured_frames,
         take_dir: config.take_dir,
         commands: command_tx,
         monitor,

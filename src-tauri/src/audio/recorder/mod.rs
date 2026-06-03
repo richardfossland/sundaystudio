@@ -15,9 +15,11 @@
 //! - `session` — rings + writer thread + controller; the FULL pipeline, driven in tests by synthetic frames, no device (tested)
 //! - `stream` — the cpal input stream; the only hardware-dependent piece, wired to `session` but NOT verified without a real device
 //!
-//! The live start/stop Tauri commands (owning the `Stream` on a dedicated
-//! thread, holding the `RecordController` in app state) land with the recording
-//! UI in Phase 2.2, where they can be exercised against real interfaces.
+//! The live start/stop/status Tauri commands now own the `Stream` on a dedicated
+//! thread (`StreamHandle`) and hold the `RecordController` in app state (see
+//! `commands::audio`'s `RecorderControl`). The pipeline + persistence are tested
+//! with synthetic frames (no device); only the cpal `Stream` itself defers its
+//! validation to the Phase 2.2 on-device matrix.
 
 pub mod command;
 pub mod meters;
@@ -30,5 +32,5 @@ pub use command::{command_channel, CommandRx, CommandTx, RecorderCommand};
 pub use meters::PeakMeters;
 pub use monitor::{mix_monitor_block, MonitorState, MAX_MONITOR_TRACKS};
 pub use session::{start_session, CaptureSink, RecordConfig, RecordController};
-pub use stream::{build_capture_stream, find_input_device};
+pub use stream::{build_capture_stream, find_input_device, StreamHandle};
 pub use writer::{MultiTrackWriter, TrackSpec};
