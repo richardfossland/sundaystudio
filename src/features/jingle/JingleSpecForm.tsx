@@ -41,7 +41,16 @@ const DEFAULT_SPEC: JingleSpec = {
   voiceover_text: "",
 };
 
-export function JingleSpecForm() {
+export function JingleSpecForm({
+  onGenerated,
+}: {
+  /**
+   * When provided, a successful generation reports its `result` + the `spec`
+   * that produced it to the caller (the Jingle page collects these into a
+   * gallery) instead of rendering the form's own inline result panel.
+   */
+  onGenerated?: (result: JingleResult, spec: JingleSpec) => void;
+} = {}) {
   const { t } = useI18n();
 
   const [spec, setSpec] = useState<JingleSpec>(DEFAULT_SPEC);
@@ -93,7 +102,12 @@ export function JingleSpecForm() {
     setResult(null);
     try {
       const generated = await ipc.ai.generateJingle(spec);
-      setResult(generated);
+      if (onGenerated) {
+        // Hand the result up to the gallery; keep the form's own panel clear.
+        onGenerated(generated, spec);
+      } else {
+        setResult(generated);
+      }
     } catch (e) {
       setGenError(e instanceof Error ? e.message : String(e));
     } finally {

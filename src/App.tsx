@@ -6,11 +6,12 @@ import { EditPage } from "@/features/edit/EditPage";
 import { DesignPage } from "@/features/design/DesignPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { HomePage } from "@/features/home/HomePage";
+import { JinglePage } from "@/features/jingle/JinglePage";
 import { useSession } from "@/lib/session";
 
 /** Overlay routes reachable from the main flow. "main" defers to the session:
  *  the recording page when a project is open, the Start gallery otherwise. */
-type Route = "main" | "design" | "settings" | "diagnostics";
+type Route = "main" | "design" | "settings" | "diagnostics" | "jingle";
 
 /** When a project is open, which workspace is showing. */
 type ProjectView = "record" | "edit";
@@ -33,6 +34,8 @@ function App() {
     content = <SettingsPage onBack={back} />;
   } else if (route === "diagnostics") {
     content = <HomePage onBack={back} />;
+  } else if (route === "jingle") {
+    content = <JinglePage onBack={back} />;
   } else if (snapshot) {
     content =
       projectView === "edit" ? (
@@ -52,6 +55,7 @@ function App() {
         onOpenSettings={() => setRoute("settings")}
         onOpenDesign={() => setRoute("design")}
         onOpenDiagnostics={() => setRoute("diagnostics")}
+        onOpenJingle={() => setRoute("jingle")}
       />
     );
   }
