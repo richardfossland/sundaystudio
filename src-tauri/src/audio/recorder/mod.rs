@@ -11,6 +11,7 @@
 //! - `writer` — multi-track WAV writing with crash-safe incremental flush (tested)
 //! - `meters` — block peak + atomic peak-hold meters (tested)
 //! - `command` — lock-free UI→audio command queue (tested)
+//! - `monitor` — the low-latency monitor mixer: mono mix of armed tracks with soft mute (Phase 1.3, tested)
 //! - `session` — rings + writer thread + controller; the FULL pipeline, driven in tests by synthetic frames, no device (tested)
 //! - `stream` — the cpal input stream; the only hardware-dependent piece, wired to `session` but NOT verified without a real device
 //!
@@ -20,12 +21,14 @@
 
 pub mod command;
 pub mod meters;
+pub mod monitor;
 pub mod session;
 pub mod stream;
 pub mod writer;
 
 pub use command::{command_channel, CommandRx, CommandTx, RecorderCommand};
 pub use meters::PeakMeters;
+pub use monitor::{mix_monitor_block, MonitorState, MAX_MONITOR_TRACKS};
 pub use session::{start_session, CaptureSink, RecordConfig, RecordController};
 pub use stream::{build_capture_stream, find_input_device};
 pub use writer::{MultiTrackWriter, TrackSpec};

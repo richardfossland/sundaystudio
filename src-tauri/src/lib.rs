@@ -40,7 +40,8 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(commands::project::ProjectState::default());
+        .manage(commands::project::ProjectState::default())
+        .manage(commands::audio::MonitorControl::default());
 
     // The `sundaystudio://import` deep link is desktop-only (the scheme itself
     // is registered by the bundler from `tauri.conf.json` → plugins.deep-link).
@@ -78,6 +79,8 @@ pub fn run() {
             commands::audio::audio_get_settings,
             commands::audio::audio_set_settings,
             commands::audio::audio_latency_estimate,
+            commands::audio::audio_set_monitoring,
+            commands::audio::audio_set_monitor_mute,
             commands::project::project_create,
             commands::project::project_templates,
             commands::project::project_create_from_template,

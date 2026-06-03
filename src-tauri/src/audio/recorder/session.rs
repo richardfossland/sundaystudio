@@ -25,7 +25,9 @@ use std::time::{Duration, Instant};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 
+use super::command::{command_channel, CommandRx, CommandTx, RecorderCommand};
 use super::meters::PeakMeters;
+use super::monitor::{mix_monitor_block, MonitorState};
 use super::writer::{MultiTrackWriter, TrackSpec};
 use crate::error::{AppError, AppResult};
 
@@ -33,6 +35,9 @@ use crate::error::{AppError, AppResult};
 const FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 /// Idle nap when the rings are empty, so the writer thread doesn't spin.
 const IDLE_NAP: Duration = Duration::from_millis(5);
+/// Room for pending UI→audio control commands (monitor/mute). The audio thread
+/// drains the whole queue each block, so it never backs up in practice.
+const COMMAND_CAPACITY: usize = 64;
 
 /// Configuration for one recording session.
 #[derive(Debug, Clone)]
@@ -49,17 +54,46 @@ pub struct RecordConfig {
 /// The capture endpoint the audio callback owns. Real-time safe: bounded work,
 /// no allocation, no locks. Pushes that don't fit a full ring are counted as
 /// dropped (an xrun indicator) rather than blocking.
+///
+/// Besides de-interleaving into the per-channel capture rings, the sink also
+/// (a) drains the UI→audio command queue once per block to apply monitor/mute
+/// changes, and (b) when monitoring is enabled, mixes the armed channels into a
+/// mono `monitor` ring the output callback drains to the headphones (Phase 1.3).
 pub struct CaptureSink {
     producers: Vec<Producer<f32>>,
     meters: Arc<PeakMeters>,
     dropped: Arc<AtomicU64>,
     channels: usize,
+    /// Control commands from the UI (monitor on/off, per-track mute).
+    commands: CommandRx,
+    /// Shared monitor control surface (enabled flag + mute mask).
+    monitor: Arc<MonitorState>,
+    /// Mono mix destination ring for the output (monitoring) callback.
+    monitor_ring: Producer<f32>,
+    /// Reused scratch for the mono mix, so the real-time path never allocates.
+    monitor_scratch: Vec<f32>,
 }
 
 impl CaptureSink {
+    /// Apply any queued control commands. Drains the whole queue (bounded by the
+    /// command-ring capacity) so a burst of UI toggles all land before this
+    /// block's audio is processed. Real-time safe: no allocation, no blocking.
+    /// `Stop` is observed here but acted on by the session-teardown flag.
+    fn drain_commands(&mut self) {
+        while let Some(cmd) = self.commands.try_recv() {
+            match cmd {
+                RecorderCommand::SetMonitoring(on) => self.monitor.set_enabled(on),
+                RecorderCommand::SetMute { track, muted } => self.monitor.set_muted(track, muted),
+                RecorderCommand::Stop => { /* teardown is driven by the shutdown flag */ }
+            }
+        }
+    }
+
     /// Feed one block of interleaved input frames (length = frames × channels).
     /// This is exactly what the cpal data callback calls.
     pub fn push_interleaved(&mut self, data: &[f32]) {
+        self.drain_commands();
+
         let ch = self.channels;
         if ch == 0 {
             return;
@@ -84,6 +118,18 @@ impl CaptureSink {
                 self.dropped.fetch_add(dropped, Ordering::Relaxed);
             }
         }
+
+        // Monitor mix: only when enabled, so a player who isn't listening costs
+        // nothing and we never feed an output device they haven't opted into.
+        if self.monitor.enabled() {
+            mix_monitor_block(data, ch, &self.monitor, &mut self.monitor_scratch);
+            for &s in &self.monitor_scratch {
+                // Overruns on the monitor ring are benign (a momentary glitch in
+                // what you HEAR, not in what's recorded), so they're dropped
+                // silently rather than counted against capture health.
+                let _ = self.monitor_ring.push(s);
+            }
+        }
     }
 
     /// Number of samples dropped due to a full ring (overrun) so far.
@@ -99,6 +145,13 @@ pub struct RecordController {
     meters: Arc<PeakMeters>,
     dropped: Arc<AtomicU64>,
     take_dir: PathBuf,
+    /// UI→audio control queue (monitor/mute); the audio thread drains it.
+    commands: CommandTx,
+    /// Shared monitor control surface, also queryable directly for the UI.
+    monitor: Arc<MonitorState>,
+    /// Consumer of the mono monitor mix. In production the output (monitoring)
+    /// callback owns this; tests drain it to assert the mix.
+    monitor_ring: Consumer<f32>,
 }
 
 impl RecordController {
@@ -115,6 +168,52 @@ impl RecordController {
 
     pub fn take_dir(&self) -> &Path {
         &self.take_dir
+    }
+
+    /// Enqueue a control command for the audio thread (non-blocking). Returns
+    /// false if the command queue is momentarily full (the UI can retry).
+    pub fn send_command(&mut self, cmd: RecorderCommand) -> bool {
+        self.commands.send(cmd)
+    }
+
+    /// Turn software monitoring on/off via the command queue.
+    pub fn set_monitoring(&mut self, on: bool) -> bool {
+        self.send_command(RecorderCommand::SetMonitoring(on))
+    }
+
+    /// Mute/unmute a track in the monitor mix via the command queue (capture is
+    /// unaffected).
+    pub fn set_monitor_mute(&mut self, track: usize, muted: bool) -> bool {
+        self.send_command(RecorderCommand::SetMute { track, muted })
+    }
+
+    /// Is software monitoring currently on? Reflects the last command the audio
+    /// thread has processed.
+    pub fn monitoring_enabled(&self) -> bool {
+        self.monitor.enabled()
+    }
+
+    /// Is `track` muted in the monitor mix?
+    pub fn monitor_muted(&self, track: usize) -> bool {
+        self.monitor.is_muted(track)
+    }
+
+    /// Pop the next mono monitor sample, if any. The output callback drains this
+    /// to the headphones; tests use it to assert the monitor mix. Returns `None`
+    /// when the ring is empty (monitoring off, or already drained).
+    pub fn pop_monitor_sample(&mut self) -> Option<f32> {
+        self.monitor_ring.pop().ok()
+    }
+
+    /// Drain all currently-available monitor samples into `out` (cleared first),
+    /// returning how many were read. A test/UI convenience over
+    /// `pop_monitor_sample`.
+    pub fn drain_monitor(&mut self, out: &mut Vec<f32>) -> usize {
+        out.clear();
+        while let Ok(s) = self.monitor_ring.pop() {
+            out.push(s);
+        }
+        out.len()
     }
 
     /// Stop the session: signal the writer thread, wait for it to drain and
@@ -162,6 +261,14 @@ pub fn start_session(config: RecordConfig) -> AppResult<(CaptureSink, RecordCont
     let dropped = Arc::new(AtomicU64::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
 
+    // UI→audio command queue (monitor/mute) and the shared monitor surface.
+    let (command_tx, command_rx) = command_channel(COMMAND_CAPACITY);
+    let monitor = Arc::new(MonitorState::new());
+
+    // The mono monitor ring, sized like the capture rings (~1 s) so a momentary
+    // output-callback stall doesn't lose the live mix.
+    let (monitor_producer, monitor_consumer) = RingBuffer::<f32>::new(capacity);
+
     let writer_thread = spawn_writer(consumers, writer, Arc::clone(&shutdown), config.channels);
 
     let sink = CaptureSink {
@@ -169,6 +276,10 @@ pub fn start_session(config: RecordConfig) -> AppResult<(CaptureSink, RecordCont
         meters: Arc::clone(&meters),
         dropped: Arc::clone(&dropped),
         channels: config.channels,
+        commands: command_rx,
+        monitor: Arc::clone(&monitor),
+        monitor_ring: monitor_producer,
+        monitor_scratch: Vec::with_capacity(capacity),
     };
     let controller = RecordController {
         writer_thread: Some(writer_thread),
@@ -176,6 +287,9 @@ pub fn start_session(config: RecordConfig) -> AppResult<(CaptureSink, RecordCont
         meters,
         dropped,
         take_dir: config.take_dir,
+        commands: command_tx,
+        monitor,
+        monitor_ring: monitor_consumer,
     };
     Ok((sink, controller))
 }
