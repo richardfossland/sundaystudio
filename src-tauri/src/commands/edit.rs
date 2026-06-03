@@ -165,14 +165,36 @@ pub async fn take_import(
     state: State<'_, ProjectState>,
     paths: Vec<String>,
 ) -> AppResult<TimelineSnapshot> {
-    if paths.is_empty() {
-        return Err(AppError::Validation("no files to import".into()));
-    }
-
     let guard = state.current.lock().await;
     let op = current(&guard)?;
     let project = store::load_project(&op.pool).await?;
-    let project_rate = project.sample_rate as u32;
+    import_takes(
+        &op.pool,
+        &op.scast_dir,
+        &op.project_id,
+        project.sample_rate as u32,
+        paths,
+    )
+    .await
+}
+
+/// The testable core of [`take_import`]: lay `paths` onto the project's tracks as
+/// a single new take, with a full-length region per file. Split out from the
+/// command so it can be exercised against a throwaway pool + temp `scast` dir
+/// with no Tauri state or device (see `tests/edit_commands.rs`).
+///
+/// `project_rate` is the project's sample rate (Hz); any file that disagrees is
+/// rejected before we mutate the project, so a bad import is a no-op.
+pub async fn import_takes(
+    pool: &sqlx::SqlitePool,
+    scast_dir: &Path,
+    project_id: &str,
+    project_rate: u32,
+    paths: Vec<String>,
+) -> AppResult<TimelineSnapshot> {
+    if paths.is_empty() {
+        return Err(AppError::Validation("no files to import".into()));
+    }
 
     // Probe every file up front: reject anything unreadable or off-rate before we
     // create a take, so a bad import leaves the project untouched.
@@ -190,7 +212,7 @@ pub async fn take_import(
     }
 
     // Resolve a target track per file: reuse existing tracks in order, then append.
-    let mut tracks = store::list_tracks(&op.pool, &op.project_id).await?;
+    let mut tracks = store::list_tracks(pool, project_id).await?;
     let mut target_ids: Vec<String> = Vec::with_capacity(probed.len());
     for (i, (path, _)) in probed.iter().enumerate() {
         if let Some(t) = tracks.get(i) {
@@ -201,30 +223,23 @@ pub async fn take_import(
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| format!("Track {}", i + 1));
             let color = IMPORT_COLORS[tracks.len() % IMPORT_COLORS.len()];
-            let added = store::add_track(&op.pool, &op.project_id, &name, color).await?;
+            let added = store::add_track(pool, project_id, &name, color).await?;
             target_ids.push(added.id.clone());
             tracks.push(added);
         }
     }
 
     let total_ms = probed.iter().map(|(_, d)| *d).fold(0.0_f64, f64::max);
-    let take = store::add_take(
-        &op.pool,
-        &op.project_id,
-        store::now_ms(),
-        total_ms,
-        &target_ids,
-    )
-    .await?;
+    let take = store::add_take(pool, project_id, store::now_ms(), total_ms, &target_ids).await?;
 
     // Copy each WAV into the take folder under its target track id, then place a
     // region covering its whole length at the timeline origin.
-    let dir = scast::take_dir(&op.scast_dir, &take.id);
+    let dir = scast::take_dir(scast_dir, &take.id);
     std::fs::create_dir_all(&dir)?;
     for ((path, duration_ms), track_id) in probed.iter().zip(&target_ids) {
         std::fs::copy(path, dir.join(format!("{track_id}.wav")))?;
         store::add_region(
-            &op.pool,
+            pool,
             Region {
                 id: String::new(),
                 take_id: take.id.clone(),
@@ -241,11 +256,11 @@ pub async fn take_import(
         .await?;
     }
 
-    store::load_timeline(&op.pool, &op.project_id).await
+    store::load_timeline(pool, project_id).await
 }
 
 /// Read a WAV's duration (ms) and sample rate from its header — no full decode.
-fn probe_wav(path: &Path) -> AppResult<(f64, u32)> {
+pub fn probe_wav(path: &Path) -> AppResult<(f64, u32)> {
     let reader = hound::WavReader::open(path)
         .map_err(|e| AppError::Audio(format!("open {}: {e}", path.display())))?;
     let spec = reader.spec();
