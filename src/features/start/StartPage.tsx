@@ -31,10 +31,12 @@ export function StartPage({
   onOpenSettings,
   onOpenDesign,
   onOpenDiagnostics,
+  onOpenJingle,
 }: {
   onOpenSettings?: () => void;
   onOpenDesign?: () => void;
   onOpenDiagnostics?: () => void;
+  onOpenJingle?: () => void;
 }) {
   const setSnapshot = useSession((s) => s.setSnapshot);
   const templates = useQuery({
@@ -97,6 +99,17 @@ export function StartPage({
               <FolderOpen size={15} />
               Open project
             </Button>
+            {onOpenJingle && (
+              <Button
+                variant="accent"
+                size="sm"
+                onClick={onOpenJingle}
+                aria-label="Jingle Studio"
+              >
+                <Music size={15} />
+                Jingle
+              </Button>
+            )}
             {onOpenDesign && (
               <Button
                 variant="ghost"
