@@ -39,6 +39,10 @@ export type { ExportPresetInfo } from "./ExportPresetInfo";
 export type { ExportResult } from "./ExportResult";
 export type { FadeShape } from "./FadeShape";
 export type { ImportRequest } from "./ImportRequest";
+export type { LevelingTrack } from "./LevelingTrack";
+export type { LevelingSnapshot } from "./LevelingSnapshot";
+export type { LevelingSuggestion } from "./LevelingSuggestion";
+export type { LevelingResult } from "./LevelingResult";
 
 /** Error shape returned by every Tauri command (see error.rs).
  *  Keep this union in sync with `AppError::code()` in Rust. */

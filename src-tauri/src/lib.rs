@@ -89,6 +89,7 @@ pub fn run() {
             commands::audio::audio_playback_mute,
             commands::audio::audio_playback_status,
             commands::audio::audio_stop_playback,
+            commands::audio::ai_auto_level,
             commands::project::project_create,
             commands::project::project_templates,
             commands::project::project_create_from_template,

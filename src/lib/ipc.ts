@@ -20,6 +20,7 @@ import type {
   ExportPresetInfo,
   ExportResult,
   LatencyEstimate,
+  LevelingResult,
   LoudnessMeasurement,
   LoudnessTarget,
   Marker,
@@ -246,5 +247,15 @@ export const exporter = {
     call<ExportResult>("export_render", { presetId, masterPresetId }),
 };
 
+// ── AI ───────────────────────────────────────────────────────────────────────
+
+export const ai = {
+  /** Ask Claude for per-track gain suggestions to balance the open project
+   *  (Phase 5.1, Sunday Cast Pro). Needs `ANTHROPIC_API_KEY` on the backend;
+   *  throws a `validation` IPCError when unavailable. Network I/O — runs on a
+   *  blocking thread backend-side, never the audio thread. */
+  autoLevel: () => call<LevelingResult>("ai_auto_level"),
+};
+
 /** Bundled namespace for ergonomic imports. */
-export const ipc = { app, audio, project, dsp, edit, exporter };
+export const ipc = { app, audio, project, dsp, edit, exporter, ai };

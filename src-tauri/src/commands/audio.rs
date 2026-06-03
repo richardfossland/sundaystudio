@@ -14,10 +14,13 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::Mutex;
 use ts_rs::TS;
 
+use crate::ai::leveling::{self, LevelingResult, LevelingSnapshot, LevelingTrack};
+use crate::ai::{self, ReqwestTransport};
 use crate::audio::playback::{self, PlaybackController, PlaybackTrack};
 use crate::audio::recorder::{CommandTx, RecorderCommand};
 use crate::audio::{devices, settings, tone};
 use crate::commands::project::{current, ProjectState};
+use crate::dsp::loudness;
 use crate::error::{AppError, AppResult};
 use crate::export::render::{self, PlacedClip};
 use crate::project::{scast, store};
@@ -357,6 +360,130 @@ pub async fn audio_stop_playback(control: State<'_, PlaybackControl>) -> AppResu
         c.stop()?;
     }
     Ok(())
+}
+
+/// Build the [`LevelingSnapshot`] the AI auto-leveler reasons over: one row per
+/// track with its current gain, clip count and measured integrated loudness /
+/// true-peak. Loudness is measured from the track's raw region audio (no fader
+/// gain applied) so the model sees the source levels, not a level we already
+/// touched; a track with no on-disk audio simply reports `None` loudness.
+///
+/// Pure-ish (no app state) so it can be exercised against a temp project; the
+/// command below supplies the open project's pool + folder. Each source WAV is
+/// decoded once and cached across the regions that reference it.
+async fn build_leveling_snapshot(
+    pool: &sqlx::SqlitePool,
+    scast_dir: &std::path::Path,
+    project_id: &str,
+) -> AppResult<LevelingSnapshot> {
+    let project = store::load_project(pool).await?;
+    let rate = project.sample_rate as u32;
+    let tracks = store::list_tracks(pool, project_id).await?;
+    let regions = store::list_project_regions(pool, project_id).await?;
+
+    let mut cache: HashMap<PathBuf, Vec<f32>> = HashMap::new();
+    let mut rows: Vec<LevelingTrack> = Vec::new();
+
+    for t in &tracks {
+        // Concatenate the track's raw region audio (un-gained) for measurement.
+        let mut audio: Vec<f32> = Vec::new();
+        let mut clip_count: u32 = 0;
+        for r in regions.iter().filter(|r| r.target_track_id == t.id) {
+            clip_count += 1;
+            let wav_path =
+                scast::take_dir(scast_dir, &r.take_id).join(format!("{}.wav", r.source_track_id));
+            if !wav_path.exists() {
+                continue;
+            }
+            if !cache.contains_key(&wav_path) {
+                let (samples, src_rate) =
+                    render::read_wav_mono(&wav_path).map_err(AppError::Audio)?;
+                if src_rate != rate {
+                    // Mixed rates are rejected elsewhere; here we just skip so the
+                    // snapshot still builds rather than aborting the whole call.
+                    continue;
+                }
+                cache.insert(wav_path.clone(), samples);
+            }
+            // Slice the region's range out of the source, in samples.
+            let src = &cache[&wav_path];
+            let start = ms_to_samples(r.start_in_take_ms, rate).min(src.len());
+            let end = ms_to_samples(r.end_in_take_ms, rate).min(src.len());
+            if end > start {
+                audio.extend_from_slice(&src[start..end]);
+            }
+        }
+
+        let measurement = if audio.is_empty() {
+            None
+        } else {
+            // Mono measurement of the concatenated track audio.
+            loudness::measure(&audio, 1, rate).ok()
+        };
+
+        rows.push(LevelingTrack {
+            track_id: t.id.clone(),
+            name: t.name.clone(),
+            current_gain_db: t.gain_db,
+            integrated_lufs: measurement.as_ref().and_then(|m| m.integrated_lufs),
+            true_peak_dbtp: measurement.as_ref().and_then(|m| m.true_peak_dbtp),
+            clip_count,
+        });
+    }
+
+    // Default the target to the first platform target (Spotify, -16 LUFS); the
+    // UI can re-run with a chosen target later if we surface that control.
+    let target_lufs = loudness::loudness_targets()
+        .first()
+        .map(|t| t.integrated_lufs)
+        .unwrap_or(-16.0);
+
+    Ok(LevelingSnapshot {
+        tracks: rows,
+        target_lufs,
+    })
+}
+
+/// Convert a millisecond position to a sample index at `rate`.
+fn ms_to_samples(ms: f64, rate: u32) -> usize {
+    ((ms / 1000.0) * rate as f64).max(0.0).round() as usize
+}
+
+/// AI auto-leveling (Phase 5.1, Pro). Snapshots the open project's tracks and
+/// asks Claude (Anthropic Messages API) for per-track gain suggestions so a
+/// multi-mic recording sits balanced before mastering.
+///
+/// The network call is opt-in and gated: it needs an `ANTHROPIC_API_KEY` (Free
+/// tier / unconfigured returns a clean validation error). The blocking HTTP call
+/// runs on `spawn_blocking` — AI is network I/O, never real-time, and never
+/// touches the audio thread.
+#[tauri::command]
+pub async fn ai_auto_level(project: State<'_, ProjectState>) -> AppResult<LevelingResult> {
+    let api_key = ai::anthropic_api_key().ok_or_else(|| {
+        AppError::Validation(
+            "AI auto-leveling needs an Anthropic API key (set ANTHROPIC_API_KEY). It's a Sunday Cast Pro feature.".into(),
+        )
+    })?;
+
+    let snapshot = {
+        let guard = project.current.lock().await;
+        let op = current(&guard)?;
+        build_leveling_snapshot(&op.pool, &op.scast_dir, &op.project_id).await?
+    };
+
+    if snapshot.tracks.is_empty() {
+        return Err(AppError::Validation(
+            "nothing to level yet — add or import tracks first".into(),
+        ));
+    }
+
+    // The Anthropic call is blocking network I/O; keep it off the async runtime.
+    tokio::task::spawn_blocking(move || {
+        leveling::auto_level(&ReqwestTransport, &api_key, &snapshot)
+            .map_err(|e| AppError::Internal(format!("AI auto-leveling failed: {e}")))
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("auto-level task failed: {e}")))?
 }
 
 #[cfg(test)]
