@@ -5,8 +5,10 @@
 //! the project's `exports/` folder. The heavy mix + DSP + file IO runs on a
 //! blocking thread so the async runtime stays responsive.
 //!
-//! MP3/AAC/FLAC encoding (the ffmpeg sidecar) is Phase 7.1b: for those presets
-//! we still write the master WAV and say so in `note`.
+//! For MP3/AAC/FLAC presets (Phase 7.1b) the bounce writes the 24-bit master WAV
+//! and then re-encodes it with the ffmpeg sidecar (see [`crate::export::encode`]).
+//! If ffmpeg is unavailable we keep the master WAV and explain in `note`, so the
+//! export always yields a usable file.
 
 use std::collections::HashMap;
 use std::fs;
@@ -22,6 +24,7 @@ use crate::dsp::loudness::{self, LoudnessTarget, NormalizationReport};
 use crate::dsp::master::MasterPreset;
 use crate::dsp::Effect;
 use crate::error::{AppError, AppResult};
+use crate::export::encode::{self, EncodeError};
 use crate::export::format::{self, ExportFormat, ExportPresetInfo};
 use crate::export::render::{self, MixSource, PlacedClip};
 use crate::project::{scast, store};
@@ -88,7 +91,10 @@ pub async fn export_render(
     let preset = format::preset_by_id(&preset_id)
         .ok_or_else(|| AppError::Validation(format!("unknown export preset: {preset_id}")))?;
     let target = loudness::target_by_id(&preset.target_id).ok_or_else(|| {
-        AppError::Internal(format!("preset references unknown target {}", preset.target_id))
+        AppError::Internal(format!(
+            "preset references unknown target {}",
+            preset.target_id
+        ))
     })?;
     let master = master_preset_id
         .as_deref()
@@ -155,7 +161,9 @@ pub async fn export_render(
 
     // Mixing, DSP and file IO are CPU/blocking — keep them off the async runtime.
     tokio::task::spawn_blocking(move || {
-        render_and_write(plans, &out_path, channels, rate, master, &target, &preset, &preset_id)
+        render_and_write(
+            plans, &out_path, channels, rate, master, &target, &preset, &preset_id,
+        )
     })
     .await
     .map_err(|e| AppError::Internal(format!("export task failed: {e}")))?
@@ -204,7 +212,10 @@ fn render_and_write(
                 clip.fade_out_ms,
                 clip.gain_db,
             );
-            clips.push(PlacedClip { position_ms: clip.position_ms, samples });
+            clips.push(PlacedClip {
+                position_ms: clip.position_ms,
+                samples,
+            });
         }
         let mut track_buf = render::assemble_timeline(&clips, rate);
         // Apply the track's bundled voice chain (gate → EQ → de-ess → comp → sat)
@@ -222,7 +233,8 @@ fn render_and_write(
     }
 
     let (out, report) = render::render(&sources, channels, rate, master, target)?;
-    let bytes = render::write_wav(out_path, &out, channels, rate, 24).map_err(AppError::Audio)?;
+    let wav_bytes =
+        render::write_wav(out_path, &out, channels, rate, 24).map_err(AppError::Audio)?;
 
     let frames = out.len() / channels.max(1) as usize;
     let duration_ms = frames as f64 / rate as f64 * 1000.0;
@@ -232,20 +244,48 @@ fn render_and_write(
         .map(|l| (l - target.integrated_lufs).abs() <= 0.5)
         .unwrap_or(false);
 
-    let note = if preset.requires_encoder {
-        Some(format!(
-            "Wrote a 24-bit master WAV. {} encoding lands once the ffmpeg sidecar is bundled (Phase 7.1b).",
-            preset.format.extension().to_uppercase()
-        ))
-    } else if !target_reached {
-        Some("Loudness landed more than 0.5 LU off target — check the mix.".to_string())
-    } else {
-        None
-    };
+    // The master WAV is always written. For encoder presets, re-encode it into
+    // the delivery format with ffmpeg; on success the encoded file is the result
+    // and the WAV stays as the archival master. If ffmpeg can't run we keep the
+    // WAV and say so, so the export never fails outright.
+    let mut output_path = out_path.to_path_buf();
+    let mut written_format = ExportFormat::Wav;
+    let mut bytes = wav_bytes;
+    let mut encoder_note: Option<String> = None;
+
+    if preset.requires_encoder {
+        match encode_master(out_path, channels, rate, preset) {
+            Ok(encoded) => {
+                bytes = std::fs::metadata(&encoded).map(|m| m.len()).unwrap_or(0);
+                output_path = encoded;
+                written_format = preset.format;
+            }
+            Err(EncodeError::FfmpegUnavailable(_)) => {
+                encoder_note = Some(format!(
+                    "Wrote a 24-bit master WAV. {} encoding needs the ffmpeg sidecar, which isn't available here — the WAV is ready to use.",
+                    preset.format.extension().to_uppercase()
+                ));
+            }
+            Err(EncodeError::FfmpegFailed { status, stderr }) => {
+                encoder_note = Some(format!(
+                    "Wrote a 24-bit master WAV, but {} encoding failed (ffmpeg exited {status:?}): {stderr}",
+                    preset.format.extension().to_uppercase()
+                ));
+            }
+        }
+    }
+
+    let note = encoder_note.or_else(|| {
+        if !target_reached {
+            Some("Loudness landed more than 0.5 LU off target — check the mix.".to_string())
+        } else {
+            None
+        }
+    });
 
     Ok(ExportResult {
-        output_path: out_path.display().to_string(),
-        written_format: ExportFormat::Wav,
+        output_path: output_path.display().to_string(),
+        written_format,
         requested_preset_id: preset_id.to_string(),
         bytes: bytes as f64,
         duration_ms,
@@ -257,11 +297,49 @@ fn render_and_write(
     })
 }
 
+/// Re-encode the master WAV (`wav_path`) into the preset's delivery format with
+/// ffmpeg, returning the encoded file's path. The encoded file sits next to the
+/// master with the format's extension. Validation of the preset combination
+/// (bitrate/channels/rate) happens in `encode::plan_encode`; an invalid plan is
+/// surfaced as an [`EncodeError::FfmpegFailed`] without a status (we never spawn).
+fn encode_master(
+    wav_path: &Path,
+    channels: u16,
+    rate: u32,
+    preset: &ExportPresetInfo,
+) -> Result<PathBuf, EncodeError> {
+    let plan =
+        encode::plan_encode(preset.format, preset.bitrate_kbps, channels, rate).map_err(|e| {
+            EncodeError::FfmpegFailed {
+                status: None,
+                stderr: format!("invalid encode plan: {e}"),
+            }
+        })?;
+    let encoded = wav_path.with_extension(plan.extension);
+    // `"ffmpeg"` resolves the bundled sidecar via PATH today; a missing binary
+    // returns FfmpegUnavailable so the caller can fall back to the WAV master.
+    encode::encode_with_ffmpeg(ffmpeg_bin(), &plan, wav_path, &encoded)?;
+    Ok(encoded)
+}
+
+/// Resolve the ffmpeg binary to invoke. Bundling the sidecar and pointing this at
+/// the resource path is a later packaging step (FFMPEG-SIDECAR-UNVERIFIED); until
+/// then we use `ffmpeg` from PATH and degrade gracefully if it's absent.
+fn ffmpeg_bin() -> &'static str {
+    "ffmpeg"
+}
+
 /// Make a filesystem-safe file stem from a project name.
 fn sanitize_stem(name: &str) -> String {
     let cleaned: String = name
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let trimmed = cleaned.trim();
     if trimmed.is_empty() {

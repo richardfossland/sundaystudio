@@ -18,6 +18,7 @@ import {
   Plus,
   Redo2,
   Scissors,
+  Sparkles,
   SquareScissors,
   Trash2,
   Undo2,
@@ -99,6 +100,7 @@ export function EditPage({
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [leveling, setLeveling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   // The copied clip lives in a ref (no re-render on copy); a flag drives the UI.
@@ -358,6 +360,43 @@ export function EditPage({
     [setSnapshot],
   );
 
+  // AI auto-leveling (Pro): ask Claude for per-track gains, then apply them to
+  // the tracks. Network I/O runs on a blocking thread backend-side; we just wait
+  // for the suggestions and write them to each track's fader gain.
+  const autoLevel = useCallback(async () => {
+    setError(null);
+    setInfo(null);
+    setLeveling(true);
+    try {
+      const result = await ipc.ai.autoLevel();
+      if (result.suggestions.length === 0) {
+        setInfo(
+          "AI had no leveling changes to suggest — the mix looks balanced.",
+        );
+        return;
+      }
+      const byId = new Map(snapshot?.tracks.map((t) => [t.id, t]) ?? []);
+      let applied = 0;
+      for (const s of result.suggestions) {
+        const track = byId.get(s.track_id);
+        if (!track || track.gain_db === s.suggested_gain_db) continue;
+        await ipc.project.updateTrack({
+          ...track,
+          gain_db: s.suggested_gain_db,
+        });
+        applied += 1;
+      }
+      if (applied > 0) setSnapshot(await ipc.project.snapshot());
+      setInfo(
+        `AI auto-level applied gain to ${applied} track${applied === 1 ? "" : "s"}.`,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLeveling(false);
+    }
+  }, [snapshot, setSnapshot]);
+
   // Keyboard: edit ops + clipboard + undo/redo (skip while typing in a field).
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -512,6 +551,20 @@ export function EditPage({
               <FilePlus2 size={15} />
             )}
             {importing ? "Importing…" : "Import audio"}
+          </Button>
+          <Button
+            variant="surface"
+            size="sm"
+            onClick={autoLevel}
+            disabled={leveling || !hasContent}
+            title="Let AI balance the track levels (Sunday Cast Pro)"
+          >
+            {leveling ? (
+              <Loader2 size={15} className="animate-spin" />
+            ) : (
+              <Sparkles size={15} />
+            )}
+            {leveling ? "Leveling…" : "Auto-level"}
           </Button>
           <div className="mx-1 h-5 w-px bg-[var(--color-border)]" />
           <Button

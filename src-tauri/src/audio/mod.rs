@@ -13,6 +13,7 @@
 
 pub mod devices;
 pub mod peaks;
+pub mod playback;
 pub mod recorder;
 pub mod settings;
 pub mod tone;

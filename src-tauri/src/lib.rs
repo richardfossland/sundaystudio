@@ -40,7 +40,9 @@ pub fn run() {
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(commands::project::ProjectState::default());
+        .manage(commands::project::ProjectState::default())
+        .manage(commands::audio::RecorderControl::default())
+        .manage(commands::audio::PlaybackControl::default());
 
     // The `sundaystudio://import` deep link is desktop-only (the scheme itself
     // is registered by the bundler from `tauri.conf.json` → plugins.deep-link).
@@ -78,6 +80,20 @@ pub fn run() {
             commands::audio::audio_get_settings,
             commands::audio::audio_set_settings,
             commands::audio::audio_latency_estimate,
+            commands::audio::audio_set_monitoring,
+            commands::audio::audio_set_monitor_mute,
+            commands::audio::audio_record_start,
+            commands::audio::audio_record_stop,
+            commands::audio::audio_record_status,
+            commands::audio::audio_play_timeline,
+            commands::audio::audio_play,
+            commands::audio::audio_pause,
+            commands::audio::audio_seek,
+            commands::audio::audio_playback_mute,
+            commands::audio::audio_playback_status,
+            commands::audio::audio_stop_playback,
+            commands::audio::ai_auto_level,
+            commands::audio::ai_jingle_generate,
             commands::project::project_create,
             commands::project::project_templates,
             commands::project::project_create_from_template,

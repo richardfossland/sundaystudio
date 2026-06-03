@@ -12,6 +12,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+import type { JingleSpec } from "./jingle";
+
 import type {
   AppError,
   AppInfo,
@@ -19,7 +21,9 @@ import type {
   AudioSettings,
   ExportPresetInfo,
   ExportResult,
+  JingleResult,
   LatencyEstimate,
+  LevelingResult,
   LoudnessMeasurement,
   LoudnessTarget,
   Marker,
@@ -246,5 +250,23 @@ export const exporter = {
     call<ExportResult>("export_render", { presetId, masterPresetId }),
 };
 
+// ── AI ───────────────────────────────────────────────────────────────────────
+
+export const ai = {
+  /** Ask Claude for per-track gain suggestions to balance the open project
+   *  (Phase 5.1, Sunday Cast Pro). Needs `ANTHROPIC_API_KEY` on the backend;
+   *  throws a `validation` IPCError when unavailable. Network I/O — runs on a
+   *  blocking thread backend-side, never the audio thread. */
+  autoLevel: () => call<LevelingResult>("ai_auto_level"),
+
+  /** Generate a jingle from a spec via the music-generation wrapper (Phase 6,
+   *  Sunday Cast Pro). Needs `SUNO_PROXY_URL` on the backend; throws a
+   *  `validation` IPCError when unconfigured or when the spec is invalid.
+   *  Network I/O — runs on a blocking thread backend-side, never the audio
+   *  thread. Returns the generated audio's URL + metadata to download & mix. */
+  generateJingle: (spec: JingleSpec) =>
+    call<JingleResult>("ai_jingle_generate", { spec }),
+};
+
 /** Bundled namespace for ergonomic imports. */
-export const ipc = { app, audio, project, dsp, edit, exporter };
+export const ipc = { app, audio, project, dsp, edit, exporter, ai };

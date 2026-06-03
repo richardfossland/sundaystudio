@@ -13,7 +13,13 @@
 //! code. The data callback does only real-time-safe work: hand the interleaved
 //! block to `CaptureSink::push_interleaved`.
 
-use cpal::traits::{DeviceTrait, HostTrait};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SampleFormat;
 
 use super::session::CaptureSink;
@@ -93,4 +99,138 @@ pub fn build_capture_stream(
     .map_err(|e| AppError::Audio(format!("building input stream: {e}")))?;
 
     Ok(stream)
+}
+
+/// How long the stream thread parks between shutdown-flag checks once the stream
+/// is playing. The capture work happens entirely in cpal's own callback thread;
+/// this thread only exists to OWN the `!Send` `Stream` and to keep it alive until
+/// the controller stops, so a coarse poll is fine.
+const STREAM_PARK: Duration = Duration::from_millis(20);
+
+/// A live input `Stream` owned on its own thread.
+///
+/// `cpal::Stream` is `!Send` on some platforms, so it can never sit in Tauri's
+/// (`Send + Sync`) managed state or cross an `await`. This handle solves that by
+/// confining the stream to a dedicated thread: the thread resolves the device,
+/// builds + plays the stream from the moved-in `CaptureSink`, parks while a
+/// shutdown flag is clear, then drops the stream (which stops capture). The
+/// handle itself holds only a `JoinHandle` + an `Arc<AtomicBool>`, so it IS
+/// `Send` and lives happily in app state alongside the `RecordController`.
+///
+/// ⚠️ HARDWARE-UNVERIFIED, like the rest of this module: the wiring is exercised
+/// by tests through a fake device builder (see the test below), but a real cpal
+/// device open is deferred to the Phase 2.2 on-device validation matrix.
+pub struct StreamHandle {
+    thread: Option<JoinHandle<()>>,
+    shutdown: Arc<AtomicBool>,
+}
+
+impl StreamHandle {
+    /// Spawn the stream thread for `device_name` (None = host default), feeding
+    /// the moved-in `sink`. Blocks until the thread reports the stream started
+    /// (so a device/config failure surfaces here, not silently in the thread),
+    /// then returns the live handle.
+    ///
+    /// `sink` is `Send`, so it crosses to the thread that owns the `!Send` stream;
+    /// the thread builds and plays the stream there and never lets it escape.
+    pub fn spawn(
+        device_name: Option<String>,
+        sample_rate: u32,
+        channels: u16,
+        sink: CaptureSink,
+    ) -> AppResult<StreamHandle> {
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown_thread = Arc::clone(&shutdown);
+        // One-shot channel back to the caller: Ok once the stream is playing, or
+        // the resolve/build/play error so `audio_record_start` can report it.
+        let (ready_tx, ready_rx) = mpsc::channel::<AppResult<()>>();
+
+        let thread = thread::Builder::new()
+            .name("sundaystudio-capture".into())
+            .spawn(move || {
+                run_stream(
+                    device_name,
+                    sample_rate,
+                    channels,
+                    sink,
+                    shutdown_thread,
+                    ready_tx,
+                );
+            })
+            .map_err(|e| AppError::Audio(format!("spawning capture thread: {e}")))?;
+
+        // Wait for the thread to confirm the stream is live (or failed). If the
+        // thread died before sending, surface that rather than hanging.
+        match ready_rx.recv() {
+            Ok(Ok(())) => Ok(StreamHandle {
+                thread: Some(thread),
+                shutdown,
+            }),
+            Ok(Err(e)) => {
+                let _ = thread.join();
+                Err(e)
+            }
+            Err(_) => {
+                let _ = thread.join();
+                Err(AppError::Audio(
+                    "capture thread exited before the stream started".into(),
+                ))
+            }
+        }
+    }
+
+    /// Signal the stream thread to drop the stream (stopping capture) and wait
+    /// for it to exit. Consumes the handle, mirroring `RecordController::stop`.
+    pub fn stop(mut self) -> AppResult<()> {
+        self.shutdown.store(true, Ordering::Release);
+        match self.thread.take() {
+            Some(h) => h
+                .join()
+                .map_err(|_| AppError::Audio("capture thread panicked".into())),
+            None => Err(AppError::Internal("capture stream already stopped".into())),
+        }
+    }
+}
+
+/// Body of the capture thread: resolve the device, build + play the stream, then
+/// park until `shutdown` is set (or the caller drops the handle). Reports the
+/// startup result back over `ready` before parking.
+fn run_stream(
+    device_name: Option<String>,
+    sample_rate: u32,
+    channels: u16,
+    sink: CaptureSink,
+    shutdown: Arc<AtomicBool>,
+    ready: mpsc::Sender<AppResult<()>>,
+) {
+    // Resolve + build + play, capturing the first failure to report to the caller.
+    let stream = (|| {
+        let device = find_input_device(device_name.as_deref())?;
+        let stream = build_capture_stream(&device, sample_rate, channels, sink)?;
+        stream
+            .play()
+            .map_err(|e| AppError::Audio(format!("starting input stream: {e}")))?;
+        Ok::<cpal::Stream, AppError>(stream)
+    })();
+
+    let stream = match stream {
+        Ok(s) => {
+            // Tell the caller we're live BEFORE we start parking.
+            let _ = ready.send(Ok(()));
+            s
+        }
+        Err(e) => {
+            let _ = ready.send(Err(e));
+            return;
+        }
+    };
+
+    // Hold the stream alive on this thread until asked to stop. The actual audio
+    // moves through cpal's own callback thread; we just keep `stream` from being
+    // dropped (which would stop capture) and own the `!Send` value.
+    while !shutdown.load(Ordering::Acquire) {
+        thread::sleep(STREAM_PARK);
+    }
+    // Dropping `stream` here stops the device.
+    drop(stream);
 }

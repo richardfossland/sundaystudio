@@ -54,6 +54,13 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 tokio = { version = "1", features = ["full"] }
 uuid = { version = "1", features = ["v7"] }
 
+# AI feature wrappers (Phase 5) — Anthropic Messages API over HTTPS. Always on
+# (no feature gate): the request-build / response-parse logic is pure and unit-
+# tested in the default gate, and the version is pinned to tauri's transitive
+# reqwest so there's no second copy. The blocking client runs only off the async
+# runtime (`spawn_blocking`); the AI path never touches the audio thread.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "native-tls"] }
+
 # Type generation for the frontend (run with `cargo test export_bindings`)
 ts-rs = { version = "11", features = ["serde-compat"] }
 
