@@ -231,6 +231,58 @@ mod tests {
     }
 
     #[test]
+    fn read_manifest_rejects_the_very_next_format() {
+        // The boundary case: exactly one past the supported max must still bounce,
+        // not just an obviously-distant 99.
+        let root = tempfile::tempdir().unwrap();
+        let scast = root.path().join("p.scast");
+        create_scast(&scast, "P").unwrap();
+        let next = Manifest {
+            name: "P".into(),
+            created_at: 0.0,
+            app_version: "x".into(),
+            format_version: 2,
+        };
+        write_manifest(&scast, &next).unwrap();
+        assert!(read_manifest(&scast).is_err());
+    }
+
+    #[test]
+    fn prune_keeps_newest_and_drops_unparseable_stems_first() {
+        // A backup whose stem isn't an epoch parses as 0 → treated as oldest, so it
+        // is among the first dropped and the numeric backups survive intact. Prune
+        // must not panic on it either.
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["100.sqlite", "200.sqlite", "300.sqlite", "junk.sqlite"] {
+            fs::write(dir.path().join(name), b"x").unwrap();
+        }
+        // A non-backup file must be left untouched regardless of count.
+        fs::write(dir.path().join("notes.txt"), b"x").unwrap();
+
+        prune_backups(dir.path(), 2).unwrap();
+
+        let mut remaining: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        remaining.sort();
+        // Newest two epochs kept; junk (stem→0, oldest) dropped; .txt spared.
+        assert_eq!(remaining, vec!["200.sqlite", "300.sqlite", "notes.txt"]);
+    }
+
+    #[test]
+    fn prune_is_a_noop_below_the_limit_and_for_missing_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("100.sqlite"), b"x").unwrap();
+        prune_backups(dir.path(), 5).unwrap();
+        assert!(dir.path().join("100.sqlite").exists());
+
+        // A directory that doesn't exist yet must succeed silently.
+        prune_backups(&dir.path().join("absent"), 5).unwrap();
+    }
+
+    #[test]
     fn recent_dedupes_and_orders_most_recent_first() {
         let cfg = tempfile::tempdir().unwrap();
         let mk = |path: &str, t: f64| RecentProject {

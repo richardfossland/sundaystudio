@@ -260,6 +260,52 @@ mod tests {
         assert_eq!(tracks[2].input_assignment, None);
     }
 
+    #[test]
+    fn mic_inputs_are_contiguous_1_to_n_within_channel_count() {
+        // Every template's mic inputs drive the recorder's interface routing, so
+        // they must be a gapless 1..=mic_count with no dupes, and never exceed the
+        // channel count the template declares it needs.
+        for t in all() {
+            let mut inputs: Vec<i32> = t
+                .tracks
+                .iter()
+                .filter_map(|tr| tr.input_assignment)
+                .collect();
+            inputs.sort_unstable();
+            let expected: Vec<i32> = (1..=t.mic_count).collect();
+            assert_eq!(
+                inputs, expected,
+                "template {} mic inputs must be a contiguous 1..={} (got {inputs:?})",
+                t.id, t.mic_count
+            );
+            if let Some(&max) = inputs.last() {
+                assert!(
+                    max <= t.channel_count,
+                    "template {} routes input {max} beyond its channel_count {}",
+                    t.id,
+                    t.channel_count
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn template_ids_are_unique() {
+        let mut ids: Vec<String> = all().into_iter().map(|t| t.id).collect();
+        let count = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), count, "duplicate template id");
+    }
+
+    #[test]
+    fn channel_count_lookup_matches_gallery() {
+        for t in all() {
+            assert_eq!(channel_count(&t.id), Some(t.channel_count));
+        }
+        assert_eq!(channel_count("nope"), None);
+    }
+
     #[tokio::test]
     async fn apply_unknown_template_errors() {
         let dir = tempfile::tempdir().unwrap();
