@@ -301,17 +301,37 @@ mod tests {
 
     #[test]
     fn mix_sums_unmuted_and_applies_gain() {
-        let a = MixSource { samples: vec![0.5; 4], gain_db: 0.0, mute: false };
-        let b = MixSource { samples: vec![0.5; 4], gain_db: 0.0, mute: false };
-        let muted = MixSource { samples: vec![1.0; 4], gain_db: 0.0, mute: true };
+        let a = MixSource {
+            samples: vec![0.5; 4],
+            gain_db: 0.0,
+            mute: false,
+        };
+        let b = MixSource {
+            samples: vec![0.5; 4],
+            gain_db: 0.0,
+            mute: false,
+        };
+        let muted = MixSource {
+            samples: vec![1.0; 4],
+            gain_db: 0.0,
+            mute: true,
+        };
         let mix = mix_to_mono(&[a, b, muted]);
         assert_eq!(mix, vec![1.0; 4]); // 0.5 + 0.5, muted ignored
     }
 
     #[test]
     fn mix_pads_to_longest_source() {
-        let short = MixSource { samples: vec![0.2; 2], gain_db: 0.0, mute: false };
-        let long = MixSource { samples: vec![0.1; 5], gain_db: 0.0, mute: false };
+        let short = MixSource {
+            samples: vec![0.2; 2],
+            gain_db: 0.0,
+            mute: false,
+        };
+        let long = MixSource {
+            samples: vec![0.1; 5],
+            gain_db: 0.0,
+            mute: false,
+        };
         assert_eq!(mix_to_mono(&[short, long]).len(), 5);
     }
 
@@ -433,5 +453,115 @@ mod tests {
         for (a, b) in signal.iter().zip(back.iter()) {
             assert!((a - b).abs() < 1e-3, "{a} vs {b}");
         }
+    }
+
+    /// Write `samples` straight to disk as an integer-PCM WAV at `bits` bits and
+    /// `channels` channels, bypassing our `write_wav` so we can exercise the
+    /// decoder against externally-shaped files (8-bit, stereo, …). The buffer is
+    /// interleaved; `samples` are clamped to [-1, 1] and quantised with hound's
+    /// own per-bit-depth conversion.
+    fn write_int_wav(path: &Path, samples: &[f32], channels: u16, bits: u16) {
+        let spec = hound::WavSpec {
+            channels,
+            sample_rate: SR,
+            bits_per_sample: bits,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut w = hound::WavWriter::create(path, spec).unwrap();
+        let max = ((1i64 << (bits - 1)) - 1) as f32;
+        for &s in samples {
+            w.write_sample((s.clamp(-1.0, 1.0) * max).round() as i32)
+                .unwrap();
+        }
+        w.finalize().unwrap();
+    }
+
+    #[test]
+    fn reads_8bit_int_wav_without_dc_offset() {
+        // hound stores 8-bit PCM unsigned (128 bias) but yields signed samples on
+        // read, so `1/128` scaling is correct: silence stays at ~0, not +1.0.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("eightbit.wav");
+        let signal: Vec<f32> = (0..256)
+            .map(|i| 0.5 * ((i % 2) as f32 * 2.0 - 1.0))
+            .collect();
+        write_int_wav(&path, &signal, 1, 8);
+
+        let (back, rate) = read_wav_mono(&path).unwrap();
+        assert_eq!(rate, SR);
+        assert_eq!(back.len(), signal.len());
+        // No 128/255 DC offset leaked in: the mean sits at zero, not ~+1.0.
+        let mean = back.iter().sum::<f32>() / back.len() as f32;
+        assert!(
+            mean.abs() < 0.02,
+            "8-bit decode carried a DC offset: mean {mean}"
+        );
+        // 8-bit quantisation is coarse (1/128 ≈ 0.008 steps) but the shape holds.
+        for (a, b) in signal.iter().zip(back.iter()) {
+            assert!((a - b).abs() < 0.02, "{a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn reads_24bit_int_wav_with_tiny_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("twentyfour.wav");
+        let signal = sine(440.0, 0.5, 0.25);
+        write_int_wav(&path, &signal, 1, 24);
+
+        let (back, rate) = read_wav_mono(&path).unwrap();
+        assert_eq!(rate, SR);
+        assert_eq!(back.len(), signal.len());
+        for (a, b) in signal.iter().zip(back.iter()) {
+            assert!((a - b).abs() < 1e-3, "{a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn downmixes_stereo_to_mono_by_averaging() {
+        // L = +A, R = -A → the average is silence; L = R = A → the average is A.
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = dir.path().join("cancel.wav");
+        let cancel_iv: Vec<f32> = [0.5_f32, -0.5].into_iter().cycle().take(64).collect();
+        write_int_wav(&cancel, &cancel_iv, 2, 16);
+        let (mono, _) = read_wav_mono(&cancel).unwrap();
+        assert_eq!(mono.len(), 32); // 64 interleaved samples → 32 frames
+        for s in &mono {
+            assert!(s.abs() < 1e-2, "opposite channels should cancel: {s}");
+        }
+
+        let same = dir.path().join("same.wav");
+        let same_iv: Vec<f32> = std::iter::repeat_n(0.5, 64).collect();
+        write_int_wav(&same, &same_iv, 2, 16);
+        let (mono, _) = read_wav_mono(&same).unwrap();
+        assert_eq!(mono.len(), 32);
+        for s in &mono {
+            assert!(
+                (s - 0.5).abs() < 1e-2,
+                "identical channels should pass through: {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn reads_float_wav_verbatim() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("float.wav");
+        let signal = sine(330.0, 0.3, 0.1);
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: SR,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+        let mut w = hound::WavWriter::create(&path, spec).unwrap();
+        for &s in &signal {
+            w.write_sample(s).unwrap();
+        }
+        w.finalize().unwrap();
+
+        let (back, rate) = read_wav_mono(&path).unwrap();
+        assert_eq!(rate, SR);
+        assert_eq!(back, signal); // float is lossless
     }
 }
