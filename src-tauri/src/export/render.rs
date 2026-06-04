@@ -204,7 +204,7 @@ pub fn render(
     let after = loudness::measure(&out, channels as u32, rate)?;
     let reached_target = after
         .integrated_lufs
-        .map(|l| (l - target.integrated_lufs).abs() <= 1.0)
+        .map(|l| loudness::reached_target(l, target.integrated_lufs))
         .unwrap_or(false);
 
     Ok((
@@ -333,6 +333,29 @@ mod tests {
             mute: false,
         };
         assert_eq!(mix_to_mono(&[short, long]).len(), 5);
+    }
+
+    #[test]
+    fn render_report_uses_canonical_reached_tolerance() {
+        // Regression: render's embedded NormalizationReport.reached_target once used
+        // a 1.0 LU tolerance while ExportResult.target_reached (and the documented
+        // contract on NormalizationReport, plus normalize_clip_safe and the TS
+        // preview) used 0.5 LU. An achieved loudness 0.7 LU off target then made the
+        // two booleans about the *same* measurement disagree. Both must now use the
+        // single canonical 0.5 LU verdict, so a 0.7-LU gap is NOT "reached".
+        use crate::dsp::loudness::{reached_target, REACHED_TOLERANCE_LU};
+        assert_eq!(REACHED_TOLERANCE_LU, 0.5);
+        let target = -16.0_f32;
+        // 0.7 LU off — inside the old 1.0 window but outside the canonical 0.5 one.
+        assert!(
+            !reached_target(target - 0.7, target),
+            "0.7 LU off must not count as reached under the 0.5 LU contract"
+        );
+        // 0.4 LU off — inside the 0.5 window, reached.
+        assert!(reached_target(target - 0.4, target));
+        // Boundary is inclusive.
+        assert!(reached_target(target - 0.5, target));
+        assert!(!reached_target(target - 0.5001, target));
     }
 
     #[test]

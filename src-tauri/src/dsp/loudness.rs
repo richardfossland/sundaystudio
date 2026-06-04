@@ -31,6 +31,19 @@ use ts_rs::TS;
 /// Errors surfaced by the loudness layer. Re-exported so callers can convert.
 pub use ebur128::Error as LoudnessError;
 
+/// How close (in LU) the achieved integrated loudness must sit to the target
+/// before we call it "reached". This is the single source of truth for the
+/// verdict: [`normalize_clip_safe`], the export render and the top-level
+/// `ExportResult.target_reached`, plus the TS preview (`src/lib/loudness.ts`),
+/// all use this same tolerance so the booleans never disagree.
+pub const REACHED_TOLERANCE_LU: f32 = 0.5;
+
+/// Whether `achieved_lufs` counts as having hit `target_lufs` — i.e. it sits
+/// within [`REACHED_TOLERANCE_LU`] of the target.
+pub fn reached_target(achieved_lufs: f32, target_lufs: f32) -> bool {
+    (achieved_lufs - target_lufs).abs() <= REACHED_TOLERANCE_LU
+}
+
 /// Convert a non-negative linear amplitude to dBFS, or `None` for silence /
 /// non-finite input (so it serialises cleanly across IPC).
 fn lin_to_db(x: f64) -> Option<f32> {
@@ -266,9 +279,9 @@ pub fn normalize_clip_safe(
     }
 
     let after = measure(samples, channels, rate)?;
-    let reached_target = after
+    let reached = after
         .integrated_lufs
-        .map(|l| (l - target.integrated_lufs).abs() <= 0.5)
+        .map(|l| reached_target(l, target.integrated_lufs))
         .unwrap_or(false);
 
     Ok(NormalizationReport {
@@ -277,7 +290,7 @@ pub fn normalize_clip_safe(
         before,
         after,
         gain_capped_by_peak,
-        reached_target,
+        reached_target: reached,
     })
 }
 
