@@ -20,9 +20,11 @@ import {
 import { Brand } from "@/components/Brand";
 import { Button } from "@/components/ui/Button";
 import { ipc } from "@/lib/ipc";
+import { describeVerdict, evaluateLoudness } from "@/lib/loudness";
 import type {
   AudioDevice,
   LoudnessMeasurement,
+  LoudnessTarget,
   ProjectMeta,
   ToneResult,
 } from "@/lib/bindings";
@@ -40,7 +42,7 @@ function fmtDb(value: number | null, unit: string): string {
  * Phase 2.1: also surfaces the project registry (new / open / delete) so the
  * full project lifecycle is exercisable from this screen during development.
  */
-export function HomePage({ onBack }: { onBack?: () => void }) {
+export function DiagnosticsPage({ onBack }: { onBack?: () => void }) {
   const queryClient = useQueryClient();
   const info = useQuery({ queryKey: ["app_info"], queryFn: ipc.app.info });
   const devices = useQuery({
@@ -405,6 +407,20 @@ export function HomePage({ onBack }: { onBack?: () => void }) {
                 />
               </dl>
             )}
+
+            {/* Per-target verdicts — what normalising this tone to each
+                platform would do (pure preview, no render). */}
+            {loudness && targets.isSuccess && targets.data.length > 0 && (
+              <ul className="mt-3 flex flex-col gap-1.5">
+                {targets.data.map((t) => (
+                  <LoudnessVerdictRow
+                    key={t.id}
+                    target={t}
+                    measurement={loudness}
+                  />
+                ))}
+              </ul>
+            )}
             {analyzeError && (
               <div className="mt-3 flex items-start gap-2 text-ui-xs text-[var(--color-danger)]">
                 <AlertTriangle size={16} className="mt-0.5 shrink-0" />
@@ -631,6 +647,42 @@ function Metric({ label, value }: { label: string; value: string }) {
       </dt>
       <dd className="font-mono text-ui-sm">{value}</dd>
     </div>
+  );
+}
+
+/**
+ * One platform target evaluated against the measured tone: a colour-coded dot
+ * (on-target / needs work / unmeasured) plus the plain-language verdict line.
+ */
+function LoudnessVerdictRow({
+  target,
+  measurement,
+}: {
+  target: LoudnessTarget;
+  measurement: LoudnessMeasurement;
+}) {
+  const verdict = evaluateLoudness(measurement, target);
+  const dot =
+    verdict.status === "unmeasured"
+      ? "var(--color-warning)"
+      : verdict.reachesTarget
+        ? "var(--color-success)"
+        : "var(--color-accent)";
+  return (
+    <li className="flex items-start gap-2 rounded-[var(--radius-md)] bg-[var(--color-bg-surface)] px-3 py-2 text-ui-xs">
+      <span
+        className="mt-1 inline-block size-2 shrink-0 rounded-full"
+        style={{ background: dot }}
+      />
+      <div className="min-w-0">
+        <span className="font-medium text-[var(--color-fg)]">
+          {target.label}
+        </span>{" "}
+        <span className="text-[var(--color-fg-muted)]">
+          {describeVerdict(verdict)}
+        </span>
+      </div>
+    </li>
   );
 }
 

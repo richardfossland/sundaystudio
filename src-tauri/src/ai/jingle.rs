@@ -49,11 +49,14 @@ pub fn suno_proxy_url() -> Option<String> {
 
 /// Everything the user fills out to describe the jingle they want.
 ///
-/// Field-for-field the same as the `JingleSpec` interface in
-/// `src/lib/jingle.ts`; the form already builds this object, and the command
-/// receives it verbatim.
+/// The canonical frontend type is the hand-written `JingleSpec` interface in
+/// `src/lib/jingle.ts`, which uses richer literal-union field types
+/// (`JingleDuration`/`JingleMood`) than ts-rs can express from these plain
+/// scalars. To avoid shipping a weaker shadow binding that nothing imports,
+/// this struct is intentionally NOT exported via `#[ts(export)]`; the `TS`
+/// derive is kept only so it composes if a future exported type embeds it.
+/// The form builds the TS spec and the command receives it verbatim.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "../../src/lib/bindings/JingleSpec.ts")]
 pub struct JingleSpec {
     pub title: String,
     pub duration_sec: u32,

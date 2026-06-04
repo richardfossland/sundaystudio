@@ -14,6 +14,8 @@ export type { ToneResult } from "./ToneResult";
 export type { AudioSettings } from "./AudioSettings";
 export type { LatencyEstimate } from "./LatencyEstimate";
 export type { LatencyZone } from "./LatencyZone";
+export type { RecordingStatus } from "./RecordingStatus";
+export type { PlaybackStatus } from "./PlaybackStatus";
 export type { Project } from "./Project";
 export type { ProjectMeta } from "./ProjectMeta";
 export type { Track } from "./Track";

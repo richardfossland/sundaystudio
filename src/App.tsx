@@ -5,7 +5,7 @@ import { RecordingPage } from "@/features/record/RecordingPage";
 import { EditPage } from "@/features/edit/EditPage";
 import { DesignPage } from "@/features/design/DesignPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
-import { HomePage } from "@/features/home/HomePage";
+import { DiagnosticsPage } from "@/features/diagnostics/DiagnosticsPage";
 import { JinglePage } from "@/features/jingle/JinglePage";
 import { useSession } from "@/lib/session";
 
@@ -33,7 +33,7 @@ function App() {
   } else if (route === "settings") {
     content = <SettingsPage onBack={back} />;
   } else if (route === "diagnostics") {
-    content = <HomePage onBack={back} />;
+    content = <DiagnosticsPage onBack={back} />;
   } else if (route === "jingle") {
     content = <JinglePage onBack={back} />;
   } else if (snapshot) {
