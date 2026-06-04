@@ -21,6 +21,7 @@ import type {
   AudioSettings,
   ExportPresetInfo,
   ExportResult,
+  ImportRequest,
   JingleResult,
   LatencyEstimate,
   LevelingResult,
@@ -301,6 +302,22 @@ export const edit = {
     call<TimelineSnapshot>("take_import", { paths }),
 };
 
+// ── Deep links (Rec → Studio import handoff) ─────────────────────────────────
+//
+// SundayRec hands a finished recording to SundayStudio by launching us with a
+// `sundaystudio://import?path=…&returnTo=sundayrec` URL. The OS single-instance
+// auto-registration of that scheme needs the bundled app + a real OS open-url
+// event, so it can't be exercised headlessly — but `parseImport` is the pure
+// validation step, reachable now via a pasted link on the diagnostics screen.
+
+export const deeplink = {
+  /** Validate + structure a `sundaystudio://import?…` URL into an
+   *  `ImportRequest`. Throws a `validation` IPCError for a malformed link or a
+   *  missing `path`. Pure backend logic — safe to call without hardware. */
+  parseImport: (url: string) =>
+    call<ImportRequest>("deeplink_parse_import", { url }),
+};
+
 // ── Export ───────────────────────────────────────────────────────────────────
 
 export const exporter = {
@@ -330,4 +347,14 @@ export const ai = {
 };
 
 /** Bundled namespace for ergonomic imports. */
-export const ipc = { app, audio, transport, project, dsp, edit, exporter, ai };
+export const ipc = {
+  app,
+  audio,
+  transport,
+  project,
+  dsp,
+  edit,
+  exporter,
+  ai,
+  deeplink,
+};
