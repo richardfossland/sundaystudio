@@ -121,6 +121,7 @@ const en: Catalog = {
   recordBackupProject: "Back up project",
   recordBackupDone: "Project backed up",
   recordBackupFailed: "Backup failed",
+  recordActionFailed: "Could not save the change",
 
   // ── Settings page ─────────────────────────────────────────────────────────
   settingsTitle: "Audio device",
@@ -313,6 +314,7 @@ const no: Catalog = {
   recordBackupProject: "Sikkerhetskopier prosjekt",
   recordBackupDone: "Prosjektet er sikkerhetskopiert",
   recordBackupFailed: "Sikkerhetskopiering mislyktes",
+  recordActionFailed: "Kunne ikke lagre endringen",
 
   // ── Settings page ─────────────────────────────────────────────────────────
   settingsTitle: "Lydenhet",
@@ -438,6 +440,7 @@ const sv: Catalog = {
   recordBackupProject: "Säkerhetskopiera projekt",
   recordBackupDone: "Projektet säkerhetskopierat",
   recordBackupFailed: "Säkerhetskopieringen misslyckades",
+  recordActionFailed: "Det gick inte att spara ändringen",
 };
 
 // ── Danish (partial) ──────────────────────────────────────────────────────
@@ -474,6 +477,7 @@ const da: Catalog = {
   recordBackupProject: "Sikkerhedskopiér projekt",
   recordBackupDone: "Projektet er sikkerhedskopieret",
   recordBackupFailed: "Sikkerhedskopiering mislykkedes",
+  recordActionFailed: "Kunne ikke gemme ændringen",
 };
 
 // ── German (partial) ──────────────────────────────────────────────────────
@@ -510,6 +514,7 @@ const de: Catalog = {
   recordBackupProject: "Projekt sichern",
   recordBackupDone: "Projekt gesichert",
   recordBackupFailed: "Sicherung fehlgeschlagen",
+  recordActionFailed: "Änderung konnte nicht gespeichert werden",
 };
 
 // ── French (partial) ──────────────────────────────────────────────────────
@@ -546,6 +551,7 @@ const fr: Catalog = {
   recordBackupProject: "Sauvegarder le projet",
   recordBackupDone: "Projet sauvegardé",
   recordBackupFailed: "Échec de la sauvegarde",
+  recordActionFailed: "Impossible d’enregistrer la modification",
 };
 
 // ── Polish (partial) ──────────────────────────────────────────────────────
@@ -582,6 +588,7 @@ const pl: Catalog = {
   recordBackupProject: "Utwórz kopię zapasową projektu",
   recordBackupDone: "Utworzono kopię zapasową projektu",
   recordBackupFailed: "Tworzenie kopii zapasowej nie powiodło się",
+  recordActionFailed: "Nie udało się zapisać zmiany",
 };
 
 // ── Catalog map ───────────────────────────────────────────────────────────────
