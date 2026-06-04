@@ -8,6 +8,7 @@
 //! `create` (new folder + database + project row) and `open` (validate folder,
 //! open database, load snapshot). Both are async (SQLite via sqlx) and tested.
 
+pub mod fsutil;
 pub mod model;
 pub mod registry;
 pub mod scast;
