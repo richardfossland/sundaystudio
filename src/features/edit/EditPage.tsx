@@ -45,6 +45,7 @@ import {
   type PrimOp,
 } from "@/lib/editing";
 import { ipc } from "@/lib/ipc";
+import { PersistQueue } from "@/lib/persistQueue";
 import { useSession } from "@/lib/session";
 import { formatTimecode } from "@/lib/timeline";
 import type { Region, Track } from "@/lib/bindings";
@@ -132,17 +133,28 @@ export function EditPage({
     };
   }, []);
 
-  // Push each primitive op to the backend (create / update / delete).
-  const persistOps = useCallback((ops: PrimOp[]) => {
-    for (const op of ops) {
-      const p =
+  // Single FIFO persistence queue for the page's lifetime: ops persist strictly
+  // in the order they were applied locally, one at a time. Without this, ops
+  // were fired un-awaited and two edits touching the same region id could reach
+  // the backend out of order (e.g. update(B) before create(B) → NotFound, which
+  // was swallowed while local state already showed the edit → the DB silently
+  // diverged from the timeline and the edit vanished on reload).
+  const persistQueueRef = useRef<PersistQueue<PrimOp> | null>(null);
+  if (!persistQueueRef.current) {
+    persistQueueRef.current = new PersistQueue<PrimOp>(
+      (op) =>
         op.kind === "create"
           ? ipc.edit.createRegion(op.region)
           : op.kind === "delete"
             ? ipc.edit.deleteRegion(op.region.id)
-            : ipc.edit.updateRegion(op.after);
-      p.catch((e) => setError(e instanceof Error ? e.message : String(e)));
-    }
+            : ipc.edit.updateRegion(op.after),
+      (_op, e) => setError(e instanceof Error ? e.message : String(e)),
+    );
+  }
+
+  // Push each primitive op to the backend (create / update / delete), in order.
+  const persistOps = useCallback((ops: PrimOp[]) => {
+    persistQueueRef.current?.enqueue(ops);
   }, []);
 
   // Run a command: apply locally, persist, record on the undo stack, drop redo.

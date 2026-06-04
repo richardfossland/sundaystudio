@@ -150,6 +150,18 @@ impl CaptureSink {
 pub struct RecordController {
     writer_thread: Option<JoinHandle<AppResult<Vec<u64>>>>,
     shutdown: Arc<AtomicBool>,
+    /// Set true by the writer thread iff it returned *prematurely* — i.e. a disk
+    /// I/O error made it exit before `stop` requested shutdown. The cpal callback
+    /// keeps filling the rings (and counting overruns) when this happens, so the
+    /// take looks healthy from the meters alone; this flag is the only live signal
+    /// that disk writes have stopped, so the UI can warn immediately instead of
+    /// discovering the loss only when the user finally presses Stop.
+    writer_failed: Arc<AtomicBool>,
+    /// Test-only fault injection: when set true the writer thread returns an error
+    /// on its next loop iteration, standing in for a real disk failure (disk full,
+    /// take dir becomes unwritable) that can't be induced deterministically and
+    /// without hardware otherwise.
+    force_writer_fail: Arc<AtomicBool>,
     meters: Arc<PeakMeters>,
     dropped: Arc<AtomicU64>,
     /// Live count of captured frames (shared with the sink), so the UI can show
@@ -175,6 +187,22 @@ impl RecordController {
     /// Samples dropped to overruns so far (0 is healthy).
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
+    }
+
+    /// Has the writer thread died prematurely (a disk write error before stop)?
+    /// `true` means capture is still running but nothing is reaching disk — the
+    /// take is silently being lost and the UI must warn the user now. `false` is
+    /// the healthy state (writer draining normally, or already cleanly stopped).
+    pub fn writer_failed(&self) -> bool {
+        self.writer_failed.load(Ordering::Acquire)
+    }
+
+    /// Test-only: arm the writer's fault injection so it returns an error (and
+    /// thus sets `writer_failed`) on its next iteration, simulating a disk
+    /// failure mid-take. Not part of the production transport.
+    #[doc(hidden)]
+    pub fn force_writer_fail_for_test(&self) {
+        self.force_writer_fail.store(true, Ordering::Release);
     }
 
     /// Frames captured so far (one per per-channel sample). The UI multiplies by
@@ -278,6 +306,8 @@ pub fn start_session(config: RecordConfig) -> AppResult<(CaptureSink, RecordCont
     let dropped = Arc::new(AtomicU64::new(0));
     let captured_frames = Arc::new(AtomicU64::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
+    let writer_failed = Arc::new(AtomicBool::new(false));
+    let force_writer_fail = Arc::new(AtomicBool::new(false));
 
     // UI→audio command queue (monitor/mute) and the shared monitor surface.
     let (command_tx, command_rx) = command_channel(COMMAND_CAPACITY);
@@ -287,7 +317,14 @@ pub fn start_session(config: RecordConfig) -> AppResult<(CaptureSink, RecordCont
     // output-callback stall doesn't lose the live mix.
     let (monitor_producer, monitor_consumer) = RingBuffer::<f32>::new(capacity);
 
-    let writer_thread = spawn_writer(consumers, writer, Arc::clone(&shutdown), config.channels);
+    let writer_thread = spawn_writer(
+        consumers,
+        writer,
+        Arc::clone(&shutdown),
+        Arc::clone(&writer_failed),
+        Arc::clone(&force_writer_fail),
+        config.channels,
+    );
 
     let sink = CaptureSink {
         producers,
@@ -303,6 +340,8 @@ pub fn start_session(config: RecordConfig) -> AppResult<(CaptureSink, RecordCont
     let controller = RecordController {
         writer_thread: Some(writer_thread),
         shutdown,
+        writer_failed,
+        force_writer_fail,
         meters,
         dropped,
         captured_frames,
@@ -317,17 +356,64 @@ pub fn start_session(config: RecordConfig) -> AppResult<(CaptureSink, RecordCont
 /// The writer thread: drain every ring into the WAVs, flush periodically, and
 /// on shutdown do a final full drain before finalising.
 fn spawn_writer(
-    mut consumers: Vec<Consumer<f32>>,
-    mut writer: MultiTrackWriter,
+    consumers: Vec<Consumer<f32>>,
+    writer: MultiTrackWriter,
     shutdown: Arc<AtomicBool>,
+    writer_failed: Arc<AtomicBool>,
+    force_writer_fail: Arc<AtomicBool>,
     channels: usize,
 ) -> JoinHandle<AppResult<Vec<u64>>> {
     thread::spawn(move || -> AppResult<Vec<u64>> {
-        let mut scratch: Vec<f32> = Vec::with_capacity(4096);
-        let mut last_flush = Instant::now();
+        // Run the drain/flush loop; on ANY error return, mark the writer as
+        // failed so the UI can see — via the controller / RecordingStatus — that
+        // disk writes stopped even though the cpal callback keeps capturing. We
+        // only flag *premature* failure: a clean stop never sets the flag.
+        let result = writer_loop(consumers, writer, &shutdown, &force_writer_fail, channels);
+        if result.is_err() {
+            writer_failed.store(true, Ordering::Release);
+        }
+        result
+    })
+}
 
-        loop {
-            let mut moved = false;
+/// The writer drain/flush/finalise loop, split out so the spawn wrapper can
+/// observe its `Result` and set the shared `writer_failed` flag on early exit.
+fn writer_loop(
+    mut consumers: Vec<Consumer<f32>>,
+    mut writer: MultiTrackWriter,
+    shutdown: &AtomicBool,
+    force_writer_fail: &AtomicBool,
+    channels: usize,
+) -> AppResult<Vec<u64>> {
+    let mut scratch: Vec<f32> = Vec::with_capacity(4096);
+    let mut last_flush = Instant::now();
+
+    loop {
+        // Test-only injected fault: stand in for a real disk write error so the
+        // premature-exit path is exercised deterministically without hardware.
+        if force_writer_fail.load(Ordering::Acquire) {
+            return Err(AppError::Audio("simulated writer disk failure".into()));
+        }
+
+        let mut moved = false;
+        for (c, consumer) in consumers.iter_mut().enumerate().take(channels) {
+            scratch.clear();
+            while let Ok(s) = consumer.pop() {
+                scratch.push(s);
+            }
+            if !scratch.is_empty() {
+                writer.write_block(c, &scratch)?;
+                moved = true;
+            }
+        }
+
+        if last_flush.elapsed() >= FLUSH_INTERVAL {
+            writer.flush()?;
+            last_flush = Instant::now();
+        }
+
+        if shutdown.load(Ordering::Acquire) {
+            // Final drain: capture has stopped, so the rings won't grow.
             for (c, consumer) in consumers.iter_mut().enumerate().take(channels) {
                 scratch.clear();
                 while let Ok(s) = consumer.pop() {
@@ -335,36 +421,17 @@ fn spawn_writer(
                 }
                 if !scratch.is_empty() {
                     writer.write_block(c, &scratch)?;
-                    moved = true;
                 }
             }
-
-            if last_flush.elapsed() >= FLUSH_INTERVAL {
-                writer.flush()?;
-                last_flush = Instant::now();
-            }
-
-            if shutdown.load(Ordering::Acquire) {
-                // Final drain: capture has stopped, so the rings won't grow.
-                for (c, consumer) in consumers.iter_mut().enumerate().take(channels) {
-                    scratch.clear();
-                    while let Ok(s) = consumer.pop() {
-                        scratch.push(s);
-                    }
-                    if !scratch.is_empty() {
-                        writer.write_block(c, &scratch)?;
-                    }
-                }
-                break;
-            }
-
-            if !moved {
-                thread::sleep(IDLE_NAP);
-            }
+            break;
         }
 
-        writer.finalize()
-    })
+        if !moved {
+            thread::sleep(IDLE_NAP);
+        }
+    }
+
+    writer.finalize()
 }
 
 #[cfg(test)]
@@ -430,6 +497,66 @@ mod tests {
         assert_eq!(counts, vec![0]);
         // An empty but valid WAV exists.
         assert!(dir.path().join("track0.wav").exists());
+    }
+
+    #[test]
+    fn writer_death_mid_take_is_visible_while_capture_continues() {
+        // Regression: a disk write error mid-recording makes the writer thread
+        // exit, but the cpal callback keeps pushing into the rings. Before the
+        // fix the controller had no live signal of this, so the UI showed a
+        // healthy take and the loss only surfaced at stop(). Now writer_failed()
+        // flips true while capture is still running.
+        let dir = tempfile::tempdir().unwrap();
+        let config = RecordConfig {
+            take_dir: dir.path().to_path_buf(),
+            tracks: track_specs(1),
+            channels: 1,
+            sample_rate: 48_000,
+        };
+        let (mut sink, controller) = start_session(config).unwrap();
+
+        // Healthy at the start.
+        assert!(!controller.writer_failed());
+
+        // Induce the writer's disk failure, then keep capturing (we are the cpal
+        // callback): pushes still succeed and frames still count up.
+        controller.force_writer_fail_for_test();
+        // Give the writer thread time to hit the injected fault and exit.
+        for _ in 0..50 {
+            if controller.writer_failed() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        // The take is still "rolling" from the capture side...
+        sink.push_interleaved(&[0.5; 480]);
+        assert_eq!(controller.captured_frames(), 480);
+        // ...but the writer is dead and the controller surfaces it.
+        assert!(
+            controller.writer_failed(),
+            "writer death must be visible to the UI while capture continues"
+        );
+
+        // Stopping a session whose writer already failed returns the error.
+        assert!(controller.stop().is_err());
+    }
+
+    #[test]
+    fn writer_failed_stays_false_through_a_clean_take() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = RecordConfig {
+            take_dir: dir.path().to_path_buf(),
+            tracks: track_specs(1),
+            channels: 1,
+            sample_rate: 48_000,
+        };
+        let (mut sink, controller) = start_session(config).unwrap();
+        sink.push_interleaved(&[0.25; 960]);
+        thread::sleep(Duration::from_millis(60));
+        // Healthy throughout — a clean take never flags failure.
+        assert!(!controller.writer_failed());
+        let counts = controller.stop().unwrap();
+        assert_eq!(counts, vec![960]);
     }
 
     #[test]

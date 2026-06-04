@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
+use super::fsutil::atomic_write;
 use crate::error::{AppError, AppResult};
 
 const REGISTRY_FILE: &str = "registry.json";
@@ -63,9 +64,13 @@ pub fn load_all(config_dir: &Path) -> Vec<ProjectMeta> {
 }
 
 fn save_all(config_dir: &Path, entries: &[ProjectMeta]) -> AppResult<()> {
-    fs::create_dir_all(config_dir)?;
-    fs::write(registry_path(config_dir), serde_json::to_vec_pretty(entries)?)?;
-    Ok(())
+    // Atomic write: a crash mid-write must leave the previous registry intact,
+    // not a truncated file that `load_all` would read as an empty list — which
+    // would silently drop every known project from the home screen.
+    atomic_write(
+        &registry_path(config_dir),
+        &serde_json::to_vec_pretty(entries)?,
+    )
 }
 
 /// Register a new project and persist the registry. Returns the new entry.
@@ -268,6 +273,40 @@ mod tests {
         assert!(ids.contains(&&c.id));
         assert!(ids.contains(&&a.id));
         assert!(!ids.contains(&&b.id));
+    }
+
+    // ── crash-safety of the on-disk index ─────────────────────────────────────
+
+    #[test]
+    fn a_partial_registry_write_reads_as_empty_total_loss() {
+        // The gap atomic writes close: a half-written registry.json (what an
+        // interrupted plain fs::write leaves) is unparseable, and load_all maps
+        // unparseable → empty, so every project silently disappears.
+        let dir = tmp();
+        register(dir.path(), "Keepme", Path::new("/k.scast")).unwrap();
+        // Simulate a crash mid plain-write: truncate the file to a JSON prefix.
+        fs::write(registry_path(dir.path()), b"[{\"id\":\"a\"").unwrap();
+        assert!(
+            load_all(dir.path()).is_empty(),
+            "a corrupt registry is read as empty — the data-loss the fix prevents"
+        );
+    }
+
+    #[test]
+    fn save_all_writes_atomically_with_no_temp_litter() {
+        // After a real save the directory holds the registry and nothing else —
+        // the temp file used for the atomic rename is gone, and the content is
+        // a complete, parseable list (never a partial one).
+        let dir = tmp();
+        register(dir.path(), "A", Path::new("/a.scast")).unwrap();
+        register(dir.path(), "B", Path::new("/b.scast")).unwrap();
+        let names: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec![REGISTRY_FILE], "stray temp file left behind");
+        assert_eq!(load_all(dir.path()).len(), 2);
     }
 
     // ── round-trip integration ────────────────────────────────────────────────

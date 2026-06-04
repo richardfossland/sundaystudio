@@ -25,4 +25,11 @@ dropped: number,
 /**
  * Per-channel peak in dBFS since the last poll (UI meters). Empty when idle.
  */
-meters_dbfs: Array<number>, };
+meters_dbfs: Array<number>, 
+/**
+ * `true` if the writer thread died mid-take (a disk error): capture may
+ * still be running and meters live, but nothing is reaching disk — the take
+ * is being lost. The UI must surface this immediately ("recording is
+ * sacred"). Always `false` when idle or healthy.
+ */
+writer_failed: boolean, };

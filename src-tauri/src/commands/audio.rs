@@ -105,6 +105,11 @@ pub struct RecordingStatus {
     pub dropped: f64,
     /// Per-channel peak in dBFS since the last poll (UI meters). Empty when idle.
     pub meters_dbfs: Vec<f32>,
+    /// `true` if the writer thread died mid-take (a disk error): capture may
+    /// still be running and meters live, but nothing is reaching disk — the take
+    /// is being lost. The UI must surface this immediately ("recording is
+    /// sacred"). Always `false` when idle or healthy.
+    pub writer_failed: bool,
 }
 
 impl RecordingStatus {
@@ -117,6 +122,7 @@ impl RecordingStatus {
             duration_ms: 0.0,
             dropped: 0.0,
             meters_dbfs: Vec::new(),
+            writer_failed: false,
         }
     }
 }
@@ -294,6 +300,7 @@ pub async fn audio_record_start(
         duration_ms: 0.0,
         dropped: controller.dropped() as f64,
         meters_dbfs: vec![f32::NEG_INFINITY; channel_count],
+        writer_failed: controller.writer_failed(),
     };
 
     *recorder.session.lock().await = Some(RecorderSession {
@@ -348,7 +355,8 @@ pub async fn audio_record_stop(
     // Guard against the project having been swapped while recording.
     if op.project_id != project_id {
         return Err(AppError::Validation(
-            "the project changed while recording — the take was saved to disk but not placed".into(),
+            "the project changed while recording — the take was saved to disk but not placed"
+                .into(),
         ));
     }
     let recorded = RecordedTake {
@@ -455,6 +463,7 @@ pub async fn audio_record_status(
                 duration_ms: frames as f64 / s.sample_rate.max(1) as f64 * 1000.0,
                 dropped: s.controller.dropped() as f64,
                 meters_dbfs: meters,
+                writer_failed: s.controller.writer_failed(),
             })
         }
         None => Ok(RecordingStatus::idle()),
