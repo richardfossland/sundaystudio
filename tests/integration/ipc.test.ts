@@ -35,6 +35,44 @@ describe("ipc client", () => {
     expect(list.host).toBe("CoreAudio");
     expect(invokeMock).toHaveBeenCalledWith("audio_devices", undefined);
   });
+
+  it("polls audio_record_status with no args", async () => {
+    invokeMock.mockResolvedValue({
+      recording: false,
+      captured_frames: 0,
+      duration_ms: 0,
+      dropped: 0,
+      meters_dbfs: [],
+      writer_failed: false,
+    });
+    const s = await ipc.audio.recordStatus();
+    expect(s.writer_failed).toBe(false);
+    expect(invokeMock).toHaveBeenCalledWith("audio_record_status", undefined);
+  });
+
+  it("passes deviceName/channels through to audio_record_start", async () => {
+    invokeMock.mockResolvedValue({
+      recording: true,
+      captured_frames: 0,
+      duration_ms: 0,
+      dropped: 0,
+      meters_dbfs: [],
+      writer_failed: false,
+    });
+    await ipc.audio.recordStart("Scarlett 2i2", 2);
+    expect(invokeMock).toHaveBeenCalledWith("audio_record_start", {
+      deviceName: "Scarlett 2i2",
+      channels: 2,
+    });
+  });
+
+  it("forwards positionMs to the transport seek command", async () => {
+    invokeMock.mockResolvedValue(undefined);
+    await ipc.transport.seek(1500);
+    expect(invokeMock).toHaveBeenCalledWith("audio_seek", {
+      positionMs: 1500,
+    });
+  });
 });
 
 describe("toIPCError", () => {
