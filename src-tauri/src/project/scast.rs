@@ -22,6 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use super::fsutil::atomic_write;
 use super::model::RecentProject;
 use crate::error::{AppError, AppResult};
 
@@ -95,9 +96,12 @@ pub fn create_scast(scast_dir: &Path, name: &str) -> AppResult<Manifest> {
 }
 
 fn write_manifest(scast_dir: &Path, manifest: &Manifest) -> AppResult<()> {
-    let json = serde_json::to_vec_pretty(manifest)?;
-    fs::write(manifest_path(scast_dir), json)?;
-    Ok(())
+    // Atomic: a crash mid-write must not leave a truncated manifest, which
+    // `read_manifest` would fail to parse — orphaning an otherwise-intact project.
+    atomic_write(
+        &manifest_path(scast_dir),
+        &serde_json::to_vec_pretty(manifest)?,
+    )
 }
 
 /// Read and validate a project's manifest.
@@ -138,9 +142,9 @@ pub fn push_recent(config_dir: &Path, entry: RecentProject) -> AppResult<()> {
     list.retain(|e| e.path != entry.path);
     list.insert(0, entry);
     list.truncate(MAX_RECENT);
-    fs::create_dir_all(config_dir)?;
-    fs::write(recent_path(config_dir), serde_json::to_vec_pretty(&list)?)?;
-    Ok(())
+    // Atomic: a crash mid-write must leave the previous recent list intact rather
+    // than a truncated file `load_recent` would silently read as empty.
+    atomic_write(&recent_path(config_dir), &serde_json::to_vec_pretty(&list)?)
 }
 
 // ── Backups ───────────────────────────────────────────────────────────────────
@@ -157,7 +161,17 @@ pub fn backup_db(scast_dir: &Path) -> AppResult<PathBuf> {
     }
     let dir = backups_dir(scast_dir);
     fs::create_dir_all(&dir)?;
-    let dest = dir.join(format!("{}.sqlite", now_ms() as u64));
+    // Filenames are epoch-ms stems so prune can sort them chronologically. Two
+    // backups within the same millisecond would collide and the second would
+    // silently overwrite the first (leaving fewer than MAX_BACKUPS distinct
+    // restore points). Bump the stem to the next free millisecond so every
+    // backup is a distinct, still chronologically-ordered, restore point.
+    let mut stamp = now_ms() as u64;
+    let mut dest = dir.join(format!("{stamp}.sqlite"));
+    while dest.exists() {
+        stamp += 1;
+        dest = dir.join(format!("{stamp}.sqlite"));
+    }
     fs::copy(&src, &dest)?;
     prune_backups(&dir, MAX_BACKUPS)?;
     Ok(dest)
@@ -332,5 +346,51 @@ mod tests {
         let backup = backup_db(&scast).unwrap();
         assert!(backup.exists());
         assert_eq!(fs::read(&backup).unwrap(), b"fake-sqlite");
+    }
+
+    #[test]
+    fn rapid_backups_never_collide_or_overwrite() {
+        // Two (or more) backups taken within the same millisecond used to share
+        // the same `<epoch_ms>.sqlite` name, so the later one silently overwrote
+        // the earlier and the retention window held fewer distinct restore
+        // points than expected. Each backup must now be a distinct file.
+        let root = tempfile::tempdir().unwrap();
+        let scast = root.path().join("p.scast");
+        create_scast(&scast, "P").unwrap();
+        fs::write(db_path(&scast), b"fake-sqlite").unwrap();
+
+        let mut paths = std::collections::HashSet::new();
+        for _ in 0..4 {
+            let b = backup_db(&scast).unwrap();
+            assert!(b.exists());
+            // A still-numeric stem keeps prune's chronological sort working.
+            assert!(b
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.parse::<u64>().ok())
+                .is_some());
+            paths.insert(b);
+        }
+        // All four are distinct files (under MAX_BACKUPS so none pruned).
+        assert_eq!(paths.len(), 4, "rapid backups collided");
+        let on_disk = fs::read_dir(backups_dir(&scast)).unwrap().count();
+        assert_eq!(on_disk, 4);
+    }
+
+    #[test]
+    fn manifest_write_is_atomic_leaving_no_temp_files() {
+        // write_manifest now routes through atomic_write: the scast dir holds the
+        // manifest plus the subdirs, never a stray `.manifest.json.*.tmp`.
+        let root = tempfile::tempdir().unwrap();
+        let scast = root.path().join("p.scast");
+        create_scast(&scast, "P").unwrap();
+        let stray: Vec<_> = fs::read_dir(&scast)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp"))
+            .collect();
+        assert!(stray.is_empty(), "left temp files: {stray:?}");
+        assert!(read_manifest(&scast).is_ok());
     }
 }
