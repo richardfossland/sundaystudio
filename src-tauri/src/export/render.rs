@@ -566,6 +566,106 @@ mod tests {
         }
     }
 
+    /// Deterministic LCG so the fuzz is reproducible and cheap.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next_u32(&mut self) -> u32 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (self.0 >> 33) as u32
+        }
+        fn unit(&mut self) -> f32 {
+            self.next_u32() as f32 / u32::MAX as f32
+        }
+        fn range(&mut self, lo: f32, hi: f32) -> f32 {
+            lo + self.unit() * (hi - lo)
+        }
+        fn usize(&mut self, lo: usize, hi: usize) -> usize {
+            lo + (self.next_u32() as usize % (hi - lo + 1))
+        }
+    }
+
+    #[test]
+    fn render_region_property_no_nan_and_unity_safe_stays_in_range() {
+        // Invariants over random windows/fades/gains:
+        //  1. Output is always finite — no NaN/Inf leaks from a 0-length fade
+        //     ramp or a degenerate window.
+        //  2. With gain_db <= 0 (attenuation) and source in [-1, 1], every
+        //     output sample stays in [-1, 1] (fades only multiply by [0, 1]).
+        //  3. The output length equals the clamped sample window.
+        let mut rng = Lcg(0x1234_5678_9abc_def0);
+        for _ in 0..500 {
+            let len = rng.usize(0, 4000);
+            // Source strictly in [-1, 1].
+            let source: Vec<f32> = (0..len).map(|_| rng.range(-1.0, 1.0)).collect();
+
+            let start_ms = rng.range(-100.0, 200.0) as f64;
+            let end_ms = rng.range(-50.0, 250.0) as f64;
+            let fade_in_ms = rng.range(0.0, 120.0) as f64;
+            let fade_out_ms = rng.range(0.0, 120.0) as f64;
+            let gain_db = -rng.range(0.0, 48.0); // attenuation only: gain_db <= 0
+
+            let out = render_region(
+                &source,
+                SR,
+                start_ms,
+                end_ms,
+                fade_in_ms,
+                fade_out_ms,
+                gain_db,
+            );
+
+            // Expected length: the clamped [s, e) window.
+            let s = ms_to_samples(start_ms.max(0.0), SR).min(source.len());
+            let e = ms_to_samples(end_ms.max(0.0), SR).min(source.len());
+            let expected = e.saturating_sub(s);
+            assert_eq!(out.len(), expected, "length mismatch");
+
+            for (i, &x) in out.iter().enumerate() {
+                assert!(x.is_finite(), "non-finite sample {x} at {i}");
+                assert!(
+                    x.abs() <= 1.0 + 1e-6,
+                    "attenuated sample out of range: {x} at {i} (gain_db {gain_db})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn render_region_property_fades_are_monotone_envelopes() {
+        // The fade-in ramp is non-decreasing in gain and the fade-out ramp is
+        // non-increasing toward the end. Test on a DC=1.0 source so the sample
+        // value *is* the envelope gain, with gain_db = 0.
+        let mut rng = Lcg(0xfeed_face_dead_beef);
+        for _ in 0..200 {
+            let win_ms = rng.range(40.0, 300.0) as f64;
+            let fade_ms = rng.range(1.0, win_ms as f32 / 2.0) as f64;
+            let n = ms_to_samples(win_ms, SR);
+            let source = vec![1.0_f32; n + 16];
+            let out = render_region(&source, SR, 0.0, win_ms, fade_ms, fade_ms, 0.0);
+            if out.len() < 4 {
+                continue;
+            }
+            let fi = ms_to_samples(fade_ms, SR).min(out.len());
+            for i in 1..fi {
+                assert!(
+                    out[i] >= out[i - 1] - 1e-6,
+                    "fade-in not monotone at {i}: {} < {}",
+                    out[i],
+                    out[i - 1]
+                );
+            }
+            let fo = ms_to_samples(fade_ms, SR).min(out.len());
+            let m = out.len();
+            for k in 1..fo {
+                // Walking from the end inward, gain should rise (toward unity).
+                assert!(
+                    out[m - 1 - k] >= out[m - k] - 1e-6,
+                    "fade-out not monotone toward end at k={k}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn reads_float_wav_verbatim() {
         let dir = tempfile::tempdir().unwrap();
