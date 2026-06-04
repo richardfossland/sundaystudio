@@ -96,7 +96,7 @@ rock-solid. See `docs/ARCHITECTURE.md` for the engine design. The rules:
 ```
 src/
   app/         page-level shells
-  features/    record · edit · jingle · export · settings · home
+  features/    record · edit · jingle · export · settings · diagnostics
   components/  shared UI (Brand, ui/*)
   lib/         ipc (typed invoke wrappers), bindings (ts-rs), hooks, cn, theme
   styles/      tokens.css (Sunday Gold accent + audio palette), globals.css

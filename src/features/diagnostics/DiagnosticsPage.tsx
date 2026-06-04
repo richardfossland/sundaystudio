@@ -42,7 +42,7 @@ function fmtDb(value: number | null, unit: string): string {
  * Phase 2.1: also surfaces the project registry (new / open / delete) so the
  * full project lifecycle is exercisable from this screen during development.
  */
-export function HomePage({ onBack }: { onBack?: () => void }) {
+export function DiagnosticsPage({ onBack }: { onBack?: () => void }) {
   const queryClient = useQueryClient();
   const info = useQuery({ queryKey: ["app_info"], queryFn: ipc.app.info });
   const devices = useQuery({
