@@ -1,7 +1,7 @@
 //! SundayStudio main library — Tauri runtime entry point.
 //!
-//! Phase 0.1 wires up the bare bridge plus the first audio smoke test: tracing,
-//! the opener plugin, and three IPC commands —
+//! Phase 0.1 wires up the bare bridge plus the first audio smoke test: tracing
+//! and three IPC commands —
 //!   - `app_info`              proves Rust ↔ React works
 //!   - `audio_devices`         enumerates input/output devices via cpal
 //!   - `audio_record_test_tone` writes a 1-second sine WAV to disk via hound
@@ -38,7 +38,6 @@ pub fn run() {
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(commands::project::ProjectState::default())
         .manage(commands::audio::RecorderControl::default())

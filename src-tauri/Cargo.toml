@@ -19,7 +19,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
 # Native file dialogs for New/Open project (Phase 2.3).
 tauri-plugin-dialog = "2"
 # Inbound `sundaystudio://import` deep links — the Rec → Studio handoff. The
