@@ -29,7 +29,7 @@ import {
 
 import { Brand } from "@/components/Brand";
 import { Button } from "@/components/ui/Button";
-import { ipc } from "@/lib/ipc";
+import { errorMessage, ipc } from "@/lib/ipc";
 import { useI18n } from "@/lib/i18n";
 import type { JingleResult } from "@/lib/bindings";
 import type { JingleSpec } from "@/lib/jingle";
@@ -163,7 +163,7 @@ function JingleCard({
     } else {
       // `play()` may reject offline / when the URL can't stream; surface it.
       void el.play().catch((e) => {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(errorMessage(e));
         setPlaying(false);
       });
     }
@@ -182,7 +182,7 @@ function JingleCard({
       const result = await ipc.ai.generateJingle(jingle.spec);
       onRegenerated(result);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setRegenerating(false);
     }

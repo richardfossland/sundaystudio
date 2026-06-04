@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 
-import { ipc, toIPCError, IPCError } from "@/lib/ipc";
+import { ipc, toIPCError, IPCError, errorMessage } from "@/lib/ipc";
 
 describe("ipc client", () => {
   beforeEach(() => invokeMock.mockReset());
@@ -95,5 +95,32 @@ describe("toIPCError", () => {
     const err = toIPCError("weird");
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toBe("weird");
+  });
+});
+
+describe("errorMessage", () => {
+  it("reads .message from an Error", () => {
+    expect(errorMessage(new Error("boom"))).toBe("boom");
+  });
+
+  it("reads .message from an IPCError (the typed Tauri error)", () => {
+    const e = new IPCError({ code: "io", message: "disk full" });
+    expect(errorMessage(e)).toBe("disk full");
+  });
+
+  it("reads .message from a bare {message} object (raw Tauri reject)", () => {
+    expect(errorMessage({ code: "validation", message: "bad spec" })).toBe(
+      "bad spec",
+    );
+  });
+
+  it("falls back to String() for primitives", () => {
+    expect(errorMessage("weird")).toBe("weird");
+    expect(errorMessage(42)).toBe("42");
+    expect(errorMessage(null)).toBe("null");
+  });
+
+  it("ignores a non-string message field", () => {
+    expect(errorMessage({ message: 123 })).toBe("[object Object]");
   });
 });

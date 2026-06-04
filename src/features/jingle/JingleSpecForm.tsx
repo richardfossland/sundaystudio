@@ -16,7 +16,7 @@ import { useState } from "react";
 import { ChevronDown, Loader2, Music, Sparkles, Wand2 } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
-import { ipc } from "@/lib/ipc";
+import { errorMessage, ipc } from "@/lib/ipc";
 import { useI18n } from "@/lib/i18n";
 import type { JingleResult } from "@/lib/bindings";
 import {
@@ -109,7 +109,7 @@ export function JingleSpecForm({
         setResult(generated);
       }
     } catch (e) {
-      setGenError(e instanceof Error ? e.message : String(e));
+      setGenError(errorMessage(e));
     } finally {
       setGenerating(false);
     }

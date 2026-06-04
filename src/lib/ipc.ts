@@ -67,6 +67,18 @@ export function toIPCError(raw: unknown): Error {
   return new Error(String(raw), { cause: raw });
 }
 
+/** Human-readable message for any thrown value — the single source of truth
+ *  for the `e instanceof Error ? e.message : String(e)` pattern the feature
+ *  pages repeated by hand. Pure + testable. */
+export function errorMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object" && "message" in err) {
+    const m = (err as { message: unknown }).message;
+    if (typeof m === "string") return m;
+  }
+  return String(err);
+}
+
 async function call<T>(
   cmd: string,
   args?: Record<string, unknown>,

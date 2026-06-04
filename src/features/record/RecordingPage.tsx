@@ -8,15 +8,15 @@ import {
   HardDriveDownload,
   Info,
   Loader2,
-  OctagonAlert,
   Plus,
   SlidersHorizontal,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
+import { StatusBanner } from "@/components/ui/StatusBanner";
 import { RecordButton, Timecode, TrackHeader } from "@/components/audio";
 import type { TrackState } from "@/components/audio";
-import { ipc } from "@/lib/ipc";
+import { errorMessage, ipc } from "@/lib/ipc";
 import { useSession } from "@/lib/session";
 import { t } from "@/lib/i18n";
 import { useRecordingStatus } from "@/lib/useRecordingStatus";
@@ -54,6 +54,7 @@ export function RecordingPage({
     "idle" | "armed" | "recording"
   >("idle");
   const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -78,7 +79,7 @@ export function RecordingPage({
       // WAV is the natively-writable format today; mastered + normalised.
       setExportResult(await ipc.exporter.render("wav-archival"));
     } catch (err) {
-      setExportError(err instanceof Error ? err.message : String(err));
+      setExportError(errorMessage(err));
     } finally {
       setExporting(false);
     }
@@ -91,7 +92,7 @@ export function RecordingPage({
       await ipc.project.backup();
       setBackupNote({ kind: "ok", text: t("recordBackupDone") });
     } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
+      const detail = errorMessage(err);
       setBackupNote({
         kind: "error",
         text: `${t("recordBackupFailed")}: ${detail}`,
@@ -107,10 +108,16 @@ export function RecordingPage({
     setSnapshot(await ipc.project.snapshot());
   }
 
+  // Track / marker mutations all flow through here. Previously a failed invoke
+  // threw an unhandled rejection and the user saw nothing change — every other
+  // mutation path on this page surfaces its error, so this one must too.
   async function withBusy(fn: () => Promise<void>) {
     setBusy(true);
+    setActionError(null);
     try {
       await fn();
+    } catch (err) {
+      setActionError(`${t("recordActionFailed")}: ${errorMessage(err)}`);
     } finally {
       setBusy(false);
     }
@@ -242,14 +249,21 @@ export function RecordingPage({
       {/* Writer-failure banner — recording is sacred: a disk-write failure
           means the take is being lost, so surface it loudly above everything. */}
       {alerts.writerFailed && (
-        <div
-          role="alert"
-          data-testid="writer-failed-banner"
-          className="flex items-center gap-2 border-b border-[var(--color-danger)] bg-[var(--color-danger)] px-5 py-2.5 text-ui-sm font-semibold text-white"
-        >
-          <OctagonAlert size={16} className="shrink-0" />
-          {t("recordWriterFailed")}
-        </div>
+        <StatusBanner
+          kind="critical"
+          testId="writer-failed-banner"
+          message={t("recordWriterFailed")}
+        />
+      )}
+
+      {/* A track/marker mutation failed — surface it instead of silently
+          dropping the change. */}
+      {actionError && (
+        <StatusBanner
+          kind="danger"
+          testId="action-error"
+          message={actionError}
+        />
       )}
 
       {/* Placeholder notice */}
@@ -262,23 +276,11 @@ export function RecordingPage({
 
       {/* Backup confirmation toast (inline, auto-dismissing) */}
       {backupNote && (
-        <div
-          role="status"
-          data-testid="backup-note"
-          className={
-            "flex items-center gap-2 border-b border-[var(--color-border)] px-5 py-2 text-ui-xs " +
-            (backupNote.kind === "ok"
-              ? "text-[var(--color-success)]"
-              : "text-[var(--color-danger)]")
-          }
-        >
-          {backupNote.kind === "ok" ? (
-            <CheckCircle2 size={14} className="shrink-0" />
-          ) : (
-            <AlertTriangle size={14} className="shrink-0" />
-          )}
-          <span className="break-all">{backupNote.text}</span>
-        </div>
+        <StatusBanner
+          kind={backupNote.kind === "ok" ? "success" : "danger"}
+          testId="backup-note"
+          message={backupNote.text}
+        />
       )}
 
       {/* Export result / error */}
@@ -307,10 +309,11 @@ export function RecordingPage({
         </div>
       )}
       {exportError && (
-        <div className="flex items-start gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-surface)] px-5 py-2 text-ui-xs text-[var(--color-danger)]">
-          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-          <span className="break-all">{exportError}</span>
-        </div>
+        <StatusBanner
+          kind="danger"
+          testId="export-error"
+          message={exportError}
+        />
       )}
 
       {/* Tracks */}
