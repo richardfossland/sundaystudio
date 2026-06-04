@@ -97,6 +97,13 @@ describe("i18n: catalog completeness", () => {
     "recordBackupProject",
     "recordBackupDone",
     "recordBackupFailed",
+    "importLinkTitle",
+    "importLinkDesc",
+    "importLinkButton",
+    "importLinkImporting",
+    "importLinkDone",
+    "importLinkError",
+    "importLinkHint",
   ];
 
   it("English catalog defines all core keys", () => {
@@ -156,6 +163,40 @@ describe("i18n: jingle-specific keys (Norwegian)", () => {
 
   it("jingle Pro notice is in Norwegian", () => {
     expect(t("jingleProNotice")).toContain("Pro");
+  });
+});
+
+describe("i18n: import-from-link keys (all locales native)", () => {
+  const IMPORT_KEYS = [
+    "importLinkTitle",
+    "importLinkDesc",
+    "importLinkPlaceholder",
+    "importLinkButton",
+    "importLinkImporting",
+    "importLinkDone",
+    "importLinkError",
+    "importLinkHint",
+  ];
+
+  it("every locale defines all import-link keys with a non-empty string", () => {
+    for (const lang of LANGS) {
+      useI18n.setState({ lang });
+      for (const key of IMPORT_KEYS) {
+        const v = useI18n.getState().t(key);
+        expect(typeof v, `${lang}/${key} must be a string`).toBe("string");
+        expect(v.length, `${lang}/${key} must be non-empty`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("importLinkDone carries the {name} placeholder for interpolation", () => {
+    for (const lang of LANGS) {
+      useI18n.setState({ lang });
+      expect(
+        useI18n.getState().t("importLinkDone"),
+        `${lang}/importLinkDone must contain {name}`,
+      ).toContain("{name}");
+    }
   });
 });
 

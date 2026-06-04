@@ -64,6 +64,19 @@ const en: Catalog = {
     "Project list loads when running in the SundayStudio app.",
   homeProjectOpenLabel: "Open",
   homeProjectRemoveLabel: "Remove {name} from registry",
+
+  // ── Import from a Sunday link (Rec → Studio deep-link handoff) ─────────────
+  importLinkTitle: "Import from Sunday link",
+  importLinkDesc:
+    "Paste a sundaystudio://import link (e.g. handed over from SundayRec) to create a project seeded with that recording.",
+  importLinkPlaceholder: "sundaystudio://import?path=…",
+  importLinkButton: "Import",
+  importLinkImporting: "Importing…",
+  importLinkDone: "Created “{name}” from the link.",
+  importLinkError: "Could not import from that link",
+  importLinkHint:
+    "Auto-launch from a clicked link arrives with the installed app; paste works now.",
+
   homeBackendTitle: "Rust backend",
   homeBackendError: "IPC unavailable (running outside Tauri?)",
   homeAudioDevicesTitle: "Audio devices",
@@ -258,6 +271,19 @@ const no: Catalog = {
     "Prosjektlisten laster når du kjører SundayStudio-appen.",
   homeProjectOpenLabel: "Åpne",
   homeProjectRemoveLabel: "Fjern {name} fra registeret",
+
+  // ── Import from a Sunday link (Rec → Studio deep-link handoff) ─────────────
+  importLinkTitle: "Importer fra Sunday-lenke",
+  importLinkDesc:
+    "Lim inn en sundaystudio://import-lenke (f.eks. overlevert fra SundayRec) for å lage et prosjekt med opptaket lagt inn.",
+  importLinkPlaceholder: "sundaystudio://import?path=…",
+  importLinkButton: "Importer",
+  importLinkImporting: "Importerer…",
+  importLinkDone: "Opprettet «{name}» fra lenken.",
+  importLinkError: "Kunne ikke importere fra den lenken",
+  importLinkHint:
+    "Automatisk åpning fra en klikket lenke kommer med den installerte appen; innliming fungerer nå.",
+
   homeBackendTitle: "Rust-backend",
   homeBackendError: "IPC utilgjengelig (kjøres utenfor Tauri?)",
   homeAudioDevicesTitle: "Lydenheter",
@@ -441,6 +467,16 @@ const sv: Catalog = {
   recordBackupDone: "Projektet säkerhetskopierat",
   recordBackupFailed: "Säkerhetskopieringen misslyckades",
   recordActionFailed: "Det gick inte att spara ändringen",
+  importLinkTitle: "Importera från Sunday-länk",
+  importLinkDesc:
+    "Klistra in en sundaystudio://import-länk (t.ex. överlämnad från SundayRec) för att skapa ett projekt med inspelningen inlagd.",
+  importLinkPlaceholder: "sundaystudio://import?path=…",
+  importLinkButton: "Importera",
+  importLinkImporting: "Importerar…",
+  importLinkDone: "Skapade ”{name}” från länken.",
+  importLinkError: "Det gick inte att importera från den länken",
+  importLinkHint:
+    "Automatisk öppning från en klickad länk kommer med den installerade appen; inklistring fungerar nu.",
 };
 
 // ── Danish (partial) ──────────────────────────────────────────────────────
@@ -478,6 +514,16 @@ const da: Catalog = {
   recordBackupDone: "Projektet er sikkerhedskopieret",
   recordBackupFailed: "Sikkerhedskopiering mislykkedes",
   recordActionFailed: "Kunne ikke gemme ændringen",
+  importLinkTitle: "Importér fra Sunday-link",
+  importLinkDesc:
+    "Indsæt et sundaystudio://import-link (f.eks. overdraget fra SundayRec) for at oprette et projekt med optagelsen lagt ind.",
+  importLinkPlaceholder: "sundaystudio://import?path=…",
+  importLinkButton: "Importér",
+  importLinkImporting: "Importerer…",
+  importLinkDone: "Oprettede “{name}” fra linket.",
+  importLinkError: "Kunne ikke importere fra det link",
+  importLinkHint:
+    "Automatisk åbning fra et klikket link følger med den installerede app; indsætning virker nu.",
 };
 
 // ── German (partial) ──────────────────────────────────────────────────────
@@ -515,6 +561,16 @@ const de: Catalog = {
   recordBackupDone: "Projekt gesichert",
   recordBackupFailed: "Sicherung fehlgeschlagen",
   recordActionFailed: "Änderung konnte nicht gespeichert werden",
+  importLinkTitle: "Aus Sunday-Link importieren",
+  importLinkDesc:
+    "Füge einen sundaystudio://import-Link ein (z. B. von SundayRec übergeben), um ein Projekt mit der Aufnahme zu erstellen.",
+  importLinkPlaceholder: "sundaystudio://import?path=…",
+  importLinkButton: "Importieren",
+  importLinkImporting: "Wird importiert…",
+  importLinkDone: "„{name}“ aus dem Link erstellt.",
+  importLinkError: "Import aus diesem Link nicht möglich",
+  importLinkHint:
+    "Das automatische Öffnen per Klick kommt mit der installierten App; Einfügen funktioniert jetzt.",
 };
 
 // ── French (partial) ──────────────────────────────────────────────────────
@@ -552,6 +608,16 @@ const fr: Catalog = {
   recordBackupDone: "Projet sauvegardé",
   recordBackupFailed: "Échec de la sauvegarde",
   recordActionFailed: "Impossible d’enregistrer la modification",
+  importLinkTitle: "Importer depuis un lien Sunday",
+  importLinkDesc:
+    "Collez un lien sundaystudio://import (transmis par SundayRec, par exemple) pour créer un projet contenant cet enregistrement.",
+  importLinkPlaceholder: "sundaystudio://import?path=…",
+  importLinkButton: "Importer",
+  importLinkImporting: "Importation…",
+  importLinkDone: "« {name} » créé à partir du lien.",
+  importLinkError: "Impossible d’importer depuis ce lien",
+  importLinkHint:
+    "L’ouverture automatique par clic arrive avec l’application installée ; le collage fonctionne dès maintenant.",
 };
 
 // ── Polish (partial) ──────────────────────────────────────────────────────
@@ -589,6 +655,16 @@ const pl: Catalog = {
   recordBackupDone: "Utworzono kopię zapasową projektu",
   recordBackupFailed: "Tworzenie kopii zapasowej nie powiodło się",
   recordActionFailed: "Nie udało się zapisać zmiany",
+  importLinkTitle: "Importuj z linku Sunday",
+  importLinkDesc:
+    "Wklej link sundaystudio://import (np. przekazany z SundayRec), aby utworzyć projekt z tym nagraniem.",
+  importLinkPlaceholder: "sundaystudio://import?path=…",
+  importLinkButton: "Importuj",
+  importLinkImporting: "Importowanie…",
+  importLinkDone: "Utworzono „{name}” z linku.",
+  importLinkError: "Nie udało się zaimportować z tego linku",
+  importLinkHint:
+    "Automatyczne otwieranie po kliknięciu linku działa w zainstalowanej aplikacji; wklejanie działa już teraz.",
 };
 
 // ── Catalog map ───────────────────────────────────────────────────────────────
