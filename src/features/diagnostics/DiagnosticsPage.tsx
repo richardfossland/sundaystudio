@@ -19,6 +19,7 @@ import {
 
 import { Brand } from "@/components/Brand";
 import { Button } from "@/components/ui/Button";
+import { ImportFromLink } from "./ImportFromLink";
 import { ipc } from "@/lib/ipc";
 import { describeVerdict, evaluateLoudness } from "@/lib/loudness";
 import type {
@@ -257,6 +258,15 @@ export function DiagnosticsPage({ onBack }: { onBack?: () => void }) {
                 : "No projects yet — create one above."}
           </Muted>
         )}
+
+        {/* Rec → Studio handoff: paste a sundaystudio://import link to seed a
+            project. The OS scheme auto-launch is deferred (needs the bundled
+            app + an open-url event); this paste path is reachable now. */}
+        <ImportFromLink
+          onImported={() =>
+            queryClient.invalidateQueries({ queryKey: ["project_list"] })
+          }
+        />
       </section>
 
       {/* Backend identity */}
