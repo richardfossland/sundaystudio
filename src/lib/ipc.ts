@@ -28,11 +28,13 @@ import type {
   LoudnessTarget,
   Marker,
   MasterPresetInfo,
+  PlaybackStatus,
   PresetInfo,
   Project,
   ProjectMeta,
   ProjectSnapshot,
   RecentProject,
+  RecordingStatus,
   Region,
   SilenceSpan,
   TemplateInfo,
@@ -104,6 +106,53 @@ export const audio = {
       sampleRate,
       bufferSize,
     }),
+
+  // ── Transport: live capture (Phase 2.2) ──────────────────────────────────
+  //
+  // The recorder owns real hardware (cpal input stream + writer thread), so
+  // start/stop can only be exercised on a real audio rig — they are wired here
+  // but hardware-gated. `recordStatus` is safe to poll without hardware: it
+  // returns the idle status when nothing is rolling, which is what the
+  // `useRecordingStatus` hook surfaces (writer-failed / dropped warnings).
+
+  /** Start capturing the open project's tracks. Resolves the input device
+   *  (omit `deviceName` for the host default) and arms one capture track per
+   *  project track. Needs real audio hardware. */
+  recordStart: (deviceName?: string, channels?: number) =>
+    call<RecordingStatus>("audio_record_start", { deviceName, channels }),
+  /** Stop the live take, finalise the WAVs and lay them on the timeline.
+   *  Returns the refreshed timeline. Needs an active take. */
+  recordStop: () => call<TimelineSnapshot>("audio_record_stop"),
+  /** Poll the live recording state: rolling?, captured duration, dropped
+   *  samples (overruns), per-channel meters, and — critically — whether the
+   *  writer thread died mid-take (a disk-write failure). Returns the idle
+   *  status when nothing is recording, so this is safe to poll always. */
+  recordStatus: () => call<RecordingStatus>("audio_record_status"),
+};
+
+// ── Transport: timeline playback (Phase 3) ───────────────────────────────────
+//
+// Plumbing only: these wrap the playback render-thread commands. The render
+// thread drives a cpal *output* stream, so playback can only be verified on
+// real hardware — wired, not verified.
+
+export const transport = {
+  /** Start playing the open project's timeline from the start. Needs an output
+   *  device (hardware-gated). */
+  play: () => call<PlaybackStatus>("audio_play_timeline"),
+  /** Resume the current (paused) playback session. */
+  resume: () => call<void>("audio_play"),
+  /** Pause playback, holding the playhead. */
+  pause: () => call<void>("audio_pause"),
+  /** Seek the playhead to a millisecond position (clamped to the length). */
+  seek: (positionMs: number) => call<void>("audio_seek", { positionMs }),
+  /** Mute/unmute a timeline track during playback (by resolved track index). */
+  muteTrack: (trackIdx: number, muted: boolean) =>
+    call<void>("audio_playback_mute", { trackIdx, muted }),
+  /** The current transport state (poll ~60fps to draw the playhead). */
+  status: () => call<PlaybackStatus>("audio_playback_status"),
+  /** Stop and tear down the playback session (no-op when nothing plays). */
+  stop: () => call<void>("audio_stop_playback"),
 };
 
 // ── Project ──────────────────────────────────────────────────────────────────
@@ -269,4 +318,4 @@ export const ai = {
 };
 
 /** Bundled namespace for ergonomic imports. */
-export const ipc = { app, audio, project, dsp, edit, exporter, ai };
+export const ipc = { app, audio, transport, project, dsp, edit, exporter, ai };

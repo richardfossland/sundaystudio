@@ -115,6 +115,12 @@ const en: Catalog = {
   recordExported: "Exported",
   recordChapters: "Chapters",
   recordAddChapter: "Add chapter",
+  recordWriterFailed:
+    "Recording stopped: disk write error — file may be corrupt.",
+  recordDroppedBadge: "{count} samples dropped",
+  recordBackupProject: "Back up project",
+  recordBackupDone: "Project backed up",
+  recordBackupFailed: "Backup failed",
 
   // ── Settings page ─────────────────────────────────────────────────────────
   settingsTitle: "Audio device",
@@ -301,6 +307,12 @@ const no: Catalog = {
   recordExported: "Eksportert",
   recordChapters: "Kapitler",
   recordAddChapter: "Legg til kapittel",
+  recordWriterFailed:
+    "Opptak stoppet: feil ved skriving til disk — filen kan være ødelagt.",
+  recordDroppedBadge: "{count} sampler tapt",
+  recordBackupProject: "Sikkerhetskopier prosjekt",
+  recordBackupDone: "Prosjektet er sikkerhetskopiert",
+  recordBackupFailed: "Sikkerhetskopiering mislyktes",
 
   // ── Settings page ─────────────────────────────────────────────────────────
   settingsTitle: "Lydenhet",
@@ -420,6 +432,12 @@ const sv: Catalog = {
   actionExport: "Exportera",
   actionExporting: "Exporterar…",
   loadingShort: "Laddar…",
+  recordWriterFailed:
+    "Inspelningen stoppades: diskskrivfel — filen kan vara skadad.",
+  recordDroppedBadge: "{count} sampel tappade",
+  recordBackupProject: "Säkerhetskopiera projekt",
+  recordBackupDone: "Projektet säkerhetskopierat",
+  recordBackupFailed: "Säkerhetskopieringen misslyckades",
 };
 
 // ── Danish (partial) ──────────────────────────────────────────────────────
@@ -450,6 +468,12 @@ const da: Catalog = {
   actionExport: "Eksporter",
   actionExporting: "Eksporterer…",
   loadingShort: "Indlæser…",
+  recordWriterFailed:
+    "Optagelsen stoppet: diskskrivefejl — filen kan være beskadiget.",
+  recordDroppedBadge: "{count} samples tabt",
+  recordBackupProject: "Sikkerhedskopiér projekt",
+  recordBackupDone: "Projektet er sikkerhedskopieret",
+  recordBackupFailed: "Sikkerhedskopiering mislykkedes",
 };
 
 // ── German (partial) ──────────────────────────────────────────────────────
@@ -480,6 +504,12 @@ const de: Catalog = {
   actionExport: "Exportieren",
   actionExporting: "Exportiert…",
   loadingShort: "Lädt…",
+  recordWriterFailed:
+    "Aufnahme gestoppt: Schreibfehler auf der Festplatte — Datei möglicherweise beschädigt.",
+  recordDroppedBadge: "{count} Samples verloren",
+  recordBackupProject: "Projekt sichern",
+  recordBackupDone: "Projekt gesichert",
+  recordBackupFailed: "Sicherung fehlgeschlagen",
 };
 
 // ── French (partial) ──────────────────────────────────────────────────────
@@ -510,6 +540,12 @@ const fr: Catalog = {
   actionExport: "Exporter",
   actionExporting: "Exportation…",
   loadingShort: "Chargement…",
+  recordWriterFailed:
+    "Enregistrement arrêté : erreur d’écriture disque — le fichier peut être corrompu.",
+  recordDroppedBadge: "{count} échantillons perdus",
+  recordBackupProject: "Sauvegarder le projet",
+  recordBackupDone: "Projet sauvegardé",
+  recordBackupFailed: "Échec de la sauvegarde",
 };
 
 // ── Polish (partial) ──────────────────────────────────────────────────────
@@ -540,6 +576,12 @@ const pl: Catalog = {
   actionExport: "Eksportuj",
   actionExporting: "Eksportowanie…",
   loadingShort: "Ładowanie…",
+  recordWriterFailed:
+    "Nagrywanie zatrzymane: błąd zapisu na dysk — plik może być uszkodzony.",
+  recordDroppedBadge: "Utracono {count} próbek",
+  recordBackupProject: "Utwórz kopię zapasową projektu",
+  recordBackupDone: "Utworzono kopię zapasową projektu",
+  recordBackupFailed: "Tworzenie kopii zapasowej nie powiodło się",
 };
 
 // ── Catalog map ───────────────────────────────────────────────────────────────

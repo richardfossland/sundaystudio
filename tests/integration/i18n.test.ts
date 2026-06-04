@@ -92,6 +92,11 @@ describe("i18n: catalog completeness", () => {
     "homeProjectsTitle",
     "homeTestToneTitle",
     "recordAddTrack",
+    "recordWriterFailed",
+    "recordDroppedBadge",
+    "recordBackupProject",
+    "recordBackupDone",
+    "recordBackupFailed",
   ];
 
   it("English catalog defines all core keys", () => {

@@ -5,8 +5,10 @@ import {
   Bookmark,
   CheckCircle2,
   Download,
+  HardDriveDownload,
   Info,
   Loader2,
+  OctagonAlert,
   Plus,
   SlidersHorizontal,
 } from "lucide-react";
@@ -16,6 +18,8 @@ import { RecordButton, Timecode, TrackHeader } from "@/components/audio";
 import type { TrackState } from "@/components/audio";
 import { ipc } from "@/lib/ipc";
 import { useSession } from "@/lib/session";
+import { t } from "@/lib/i18n";
+import { useRecordingStatus } from "@/lib/useRecordingStatus";
 import type { ExportResult, Track } from "@/lib/bindings";
 
 const TRACK_COLORS = [
@@ -53,6 +57,15 @@ export function RecordingPage({
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [backingUp, setBackingUp] = useState(false);
+  const [backupNote, setBackupNote] = useState<{
+    kind: "ok" | "error";
+    text: string;
+  } | null>(null);
+
+  // Poll the live transport for the safety surfaces (writer-failed / dropped).
+  // Polling stays on whenever a take is armed or rolling; idle status is cheap.
+  const { alerts } = useRecordingStatus({ enabled: recordState !== "idle" });
 
   if (!snapshot) return null;
   const { project, tracks, markers } = snapshot;
@@ -68,6 +81,25 @@ export function RecordingPage({
       setExportError(err instanceof Error ? err.message : String(err));
     } finally {
       setExporting(false);
+    }
+  }
+
+  async function doBackup() {
+    setBackingUp(true);
+    setBackupNote(null);
+    try {
+      await ipc.project.backup();
+      setBackupNote({ kind: "ok", text: t("recordBackupDone") });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      setBackupNote({
+        kind: "error",
+        text: `${t("recordBackupFailed")}: ${detail}`,
+      });
+    } finally {
+      setBackingUp(false);
+      // Auto-dismiss the confirmation toast after a few seconds.
+      window.setTimeout(() => setBackupNote(null), 4000);
     }
   }
 
@@ -152,6 +184,19 @@ export function RecordingPage({
           <Button
             variant="surface"
             size="sm"
+            onClick={doBackup}
+            disabled={backingUp}
+          >
+            {backingUp ? (
+              <Loader2 size={15} className="animate-spin" />
+            ) : (
+              <HardDriveDownload size={15} />
+            )}
+            {t("recordBackupProject")}
+          </Button>
+          <Button
+            variant="surface"
+            size="sm"
             onClick={doExport}
             disabled={exporting}
           >
@@ -162,6 +207,19 @@ export function RecordingPage({
             )}
             {exporting ? "Exporting…" : "Export"}
           </Button>
+          {alerts.hasDropped && (
+            <span
+              role="status"
+              data-testid="dropped-badge"
+              className="flex items-center gap-1 rounded-[var(--radius-sm)] bg-[var(--color-warning)]/15 px-2 py-1 text-ui-xs font-medium text-[var(--color-warning)]"
+            >
+              <AlertTriangle size={12} className="shrink-0" />
+              {t("recordDroppedBadge").replace(
+                "{count}",
+                String(alerts.dropped),
+              )}
+            </span>
+          )}
           <Timecode ms={0} size="md" />
           <div className="flex flex-col items-center gap-1">
             <RecordButton
@@ -181,6 +239,19 @@ export function RecordingPage({
         </div>
       </header>
 
+      {/* Writer-failure banner — recording is sacred: a disk-write failure
+          means the take is being lost, so surface it loudly above everything. */}
+      {alerts.writerFailed && (
+        <div
+          role="alert"
+          data-testid="writer-failed-banner"
+          className="flex items-center gap-2 border-b border-[var(--color-danger)] bg-[var(--color-danger)] px-5 py-2.5 text-ui-sm font-semibold text-white"
+        >
+          <OctagonAlert size={16} className="shrink-0" />
+          {t("recordWriterFailed")}
+        </div>
+      )}
+
       {/* Placeholder notice */}
       <div className="flex items-center gap-2 bg-[var(--color-bg-surface)] px-5 py-2 text-ui-xs text-[var(--color-fg-muted)]">
         <Info size={13} className="shrink-0" />
@@ -188,6 +259,27 @@ export function RecordingPage({
         on real audio hardware. Track settings and chapters below are saved to
         the project.
       </div>
+
+      {/* Backup confirmation toast (inline, auto-dismissing) */}
+      {backupNote && (
+        <div
+          role="status"
+          data-testid="backup-note"
+          className={
+            "flex items-center gap-2 border-b border-[var(--color-border)] px-5 py-2 text-ui-xs " +
+            (backupNote.kind === "ok"
+              ? "text-[var(--color-success)]"
+              : "text-[var(--color-danger)]")
+          }
+        >
+          {backupNote.kind === "ok" ? (
+            <CheckCircle2 size={14} className="shrink-0" />
+          ) : (
+            <AlertTriangle size={14} className="shrink-0" />
+          )}
+          <span className="break-all">{backupNote.text}</span>
+        </div>
+      )}
 
       {/* Export result / error */}
       {exportResult && (
