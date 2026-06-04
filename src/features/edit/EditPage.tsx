@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  AlertTriangle,
   ArrowLeft,
   Blend,
   ClipboardPaste,
@@ -28,6 +27,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
+import { StatusBanner } from "@/components/ui/StatusBanner";
 import { Timecode } from "@/components/audio";
 import { cn } from "@/lib/cn";
 import {
@@ -44,7 +44,7 @@ import {
   type EditCommand,
   type PrimOp,
 } from "@/lib/editing";
-import { ipc } from "@/lib/ipc";
+import { errorMessage, ipc } from "@/lib/ipc";
 import { PersistQueue } from "@/lib/persistQueue";
 import { useSession } from "@/lib/session";
 import { formatTimecode } from "@/lib/timeline";
@@ -124,9 +124,7 @@ export function EditPage({
     ipc.edit
       .timeline()
       .then((tl) => alive && setRegions(tl.regions))
-      .catch(
-        (e) => alive && setError(e instanceof Error ? e.message : String(e)),
-      )
+      .catch((e) => alive && setError(errorMessage(e)))
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
@@ -148,7 +146,7 @@ export function EditPage({
           : op.kind === "delete"
             ? ipc.edit.deleteRegion(op.region.id)
             : ipc.edit.updateRegion(op.after),
-      (_op, e) => setError(e instanceof Error ? e.message : String(e)),
+      (_op, e) => setError(errorMessage(e)),
     );
   }
 
@@ -345,7 +343,7 @@ export function EditPage({
           `Removed silence — ${((before - keptTotal) / 1000).toFixed(1)}s shorter, now ${clips} clip(s).`,
         );
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(errorMessage(e));
       } finally {
         setAnalyzing(false);
       }
@@ -366,7 +364,7 @@ export function EditPage({
         await ipc.project.updateTrack({ ...track, voice_preset: presetId });
         setSnapshot(await ipc.project.snapshot());
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(errorMessage(e));
       }
     },
     [setSnapshot],
@@ -403,7 +401,7 @@ export function EditPage({
         `AI auto-level applied gain to ${applied} track${applied === 1 ? "" : "s"}.`,
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setLeveling(false);
     }
@@ -485,7 +483,7 @@ export function EditPage({
       if (!result) return;
       picked = Array.isArray(result) ? result : [result];
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       return;
     }
     if (picked.length === 0) return;
@@ -500,7 +498,7 @@ export function EditPage({
       // Import may have created tracks — refresh the project snapshot.
       setSnapshot(await ipc.project.snapshot());
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
     } finally {
       setImporting(false);
     }
@@ -645,17 +643,9 @@ export function EditPage({
       </header>
 
       {error && (
-        <div className="flex items-start gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-surface)] px-5 py-2 text-ui-xs text-[var(--color-danger)]">
-          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-          <span className="break-all">{error}</span>
-        </div>
+        <StatusBanner kind="danger" testId="edit-error" message={error} />
       )}
-      {info && (
-        <div className="flex items-start gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-surface)] px-5 py-2 text-ui-xs text-[var(--color-fg-muted)]">
-          <Eraser size={14} className="mt-0.5 shrink-0" />
-          <span>{info}</span>
-        </div>
-      )}
+      {info && <StatusBanner kind="info" testId="edit-info" message={info} />}
 
       {/* Body */}
       {loading ? (
