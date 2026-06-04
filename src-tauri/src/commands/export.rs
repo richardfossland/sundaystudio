@@ -241,7 +241,7 @@ fn render_and_write(
     let target_reached = report
         .after
         .integrated_lufs
-        .map(|l| (l - target.integrated_lufs).abs() <= 0.5)
+        .map(|l| loudness::reached_target(l, target.integrated_lufs))
         .unwrap_or(false);
 
     // The master WAV is always written. For encoder presets, re-encode it into
