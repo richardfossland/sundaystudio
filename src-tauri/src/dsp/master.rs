@@ -118,7 +118,7 @@ pub fn master_normalize(
     let after = loudness::measure(samples, channels, rate)?;
     let reached_target = after
         .integrated_lufs
-        .map(|l| (l - target.integrated_lufs).abs() <= 1.0)
+        .map(|l| loudness::reached_target(l, target.integrated_lufs))
         .unwrap_or(false);
 
     Ok(NormalizationReport {
@@ -360,6 +360,58 @@ mod tests {
                 p.label()
             );
         }
+    }
+
+    #[test]
+    fn reached_target_uses_the_canonical_tolerance() {
+        // Regression: master_normalize hard-coded a 1.0 LU "reached" window while
+        // the canonical verdict (loudness::reached_target / REACHED_TOLERANCE_LU),
+        // the export render, normalize_clip_safe and the TS preview all use 0.5 LU.
+        // The NormalizationReport contract documents 0.5 LU, so a report whose
+        // achieved loudness lands between 0.5 and 1.0 LU off target must NOT be
+        // flagged reached — but the old code reported `reached = true`.
+        //
+        // This quiet-sine-plus-spike input deterministically lands ~0.54 LU off
+        // the Spotify target after gain + limiting, i.e. inside the dropped
+        // (0.5, 1.0] window. The report's flag must agree with the canonical
+        // helper applied to the same achieved measurement.
+        use crate::dsp::loudness::reached_target;
+        let mut buf: Vec<f32> = sine(300.0, SR_F, SR as usize * 4)
+            .iter()
+            .map(|s| s * 0.05)
+            .collect();
+        // One full-scale spike per second forces the limiter to engage hard, so
+        // the achieved loudness lands ~0.54 LU below target after gain+limiting.
+        let mut i = 0;
+        while i < buf.len() {
+            buf[i] = 0.99;
+            i += SR as usize;
+        }
+        let target = target_by_id("spotify").unwrap();
+        let mut chain = MasterChain::voice();
+        let report = master_normalize(&mut buf, 1, SR, &target, &mut chain).unwrap();
+
+        let achieved = report.after.integrated_lufs.unwrap();
+        let off = (achieved - target.integrated_lufs).abs();
+        // Sanity: this fixture really does land in the previously-mishandled gap.
+        assert!(
+            off > 0.5 && off <= 1.0,
+            "fixture must land 0.5–1.0 LU off target, got {off} LU"
+        );
+        // The flag must match the single canonical verdict, so it disagrees with
+        // neither the export render nor the TS preview for the same measurement.
+        assert_eq!(
+            report.reached_target,
+            reached_target(achieved, target.integrated_lufs),
+            "master report reached_target ({}) diverged from the canonical 0.5 LU verdict ({}) at {off} LU off",
+            report.reached_target,
+            reached_target(achieved, target.integrated_lufs),
+        );
+        // And concretely: 0.5–1.0 LU off is NOT reached.
+        assert!(
+            !report.reached_target,
+            "{off} LU off must not count as reached"
+        );
     }
 
     #[test]
