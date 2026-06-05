@@ -88,7 +88,50 @@ pub fn parse_import_url(url: &str) -> AppResult<ImportRequest> {
         AppError::Validation("deep-link import is missing a non-empty `path`".into())
     })?;
 
+    // SECURITY: the link is untrusted (any app or pasted URL can launch us), and
+    // `path` is copied straight off disk by the import flow. Only accept a clean
+    // absolute path so a crafted link can't traverse out (`../../etc/passwd`) or
+    // read a file relative to our working directory.
+    validate_import_path(&path)?;
+
     Ok(ImportRequest { path, return_to })
+}
+
+/// Reject any import path that isn't a clean absolute path: a relative path, or
+/// one containing a `..` (parent-dir) component. This is the choke point that
+/// turns the untrusted deep-link `path` into something safe to copy off disk.
+///
+/// Absolute is recognised cross-platform: a leading `/` (POSIX) or a Windows
+/// drive/UNC prefix (`C:\…`, `\\server\…`). Legit Rec → Studio handoffs always
+/// send an absolute file path, so this preserves every real link.
+fn validate_import_path(path: &str) -> AppResult<()> {
+    if !is_absolute_path(path) {
+        return Err(AppError::Validation(format!(
+            "deep-link import path must be absolute: {path:?}"
+        )));
+    }
+    // Reject a `..` *component* on either separator. Splitting on both `/` and
+    // `\` catches traversal regardless of the platform that produced the link.
+    if path.split(['/', '\\']).any(|seg| seg == "..") {
+        return Err(AppError::Validation(format!(
+            "deep-link import path must not contain '..': {path:?}"
+        )));
+    }
+    Ok(())
+}
+
+/// True for a POSIX-absolute path (`/…`) or a Windows absolute path: a drive
+/// (`C:\…` / `C:/…`) or a UNC share (`\\server\…`).
+fn is_absolute_path(path: &str) -> bool {
+    if path.starts_with('/') || path.starts_with('\\') {
+        return true;
+    }
+    // `X:\…` or `X:/…` — a single ASCII drive letter, a colon, then a separator.
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
 }
 
 /// If `s` begins with `scheme:` (case-insensitive), return the remainder with
@@ -207,6 +250,38 @@ mod tests {
         assert!(parse_import_url("sundaystudio://import?path=%20%20").is_err());
         // No query at all is also missing a path.
         assert!(parse_import_url("sundaystudio://import").is_err());
+    }
+
+    #[test]
+    fn rejects_traversal_and_relative_paths() {
+        // SECURITY: the `path` comes from an *untrusted* deep link — any other app
+        // (or a pasted link) can launch us with `sundaystudio://import?path=…`, and
+        // that path is copied off disk verbatim by `take_import`. A `..` sequence
+        // or a relative path must be rejected so a crafted link can't read e.g.
+        // `../../../../etc/passwd` or a file relative to the app's cwd.
+        for bad in [
+            "sundaystudio://import?path=../../../../etc/passwd",
+            "sundaystudio://import?path=%2E%2E%2F%2E%2E%2Fetc%2Fpasswd", // encoded ../../
+            "sundaystudio://import?path=/Users/ola/../../../etc/passwd",
+            "sundaystudio://import?path=relative/take.wav",
+            "sundaystudio://import?path=take.wav",
+        ] {
+            assert!(
+                parse_import_url(bad).is_err(),
+                "traversal/relative path must be rejected: {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_clean_absolute_paths() {
+        // The legitimate Rec → Studio handoff: a plain absolute path with no `..`.
+        let req =
+            parse_import_url("sundaystudio://import?path=%2FUsers%2Fola%2Fsermon.wav").unwrap();
+        assert_eq!(req.path, "/Users/ola/sermon.wav");
+        // A Windows absolute path is also fine.
+        let req = parse_import_url("sundaystudio://import?path=C:\\Users\\Ola\\take.wav").unwrap();
+        assert_eq!(req.path, "C:\\Users\\Ola\\take.wav");
     }
 
     #[test]
