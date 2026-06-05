@@ -1,4 +1,14 @@
 import { useState } from "react";
+import {
+  Home,
+  Settings,
+  Palette,
+  Activity,
+  Music,
+  Mic,
+  Scissors,
+  FolderX,
+} from "lucide-react";
 
 import { StartPage } from "@/features/start/StartPage";
 import { RecordingPage } from "@/features/record/RecordingPage";
@@ -7,6 +17,10 @@ import { DesignPage } from "@/features/design/DesignPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { DiagnosticsPage } from "@/features/diagnostics/DiagnosticsPage";
 import { JinglePage } from "@/features/jingle/JinglePage";
+import {
+  CommandPalette,
+  type PaletteCommand,
+} from "@/components/CommandPalette";
 import { useSession } from "@/lib/session";
 
 /** Overlay routes reachable from the main flow. "main" defers to the session:
@@ -60,9 +74,80 @@ function App() {
     );
   }
 
+  const hasProject = Boolean(snapshot);
+  const goto = (next: Route) => setRoute(next);
+  const commands: PaletteCommand[] = [
+    {
+      id: "home",
+      label: hasProject ? "Back to project" : "Home / Start",
+      group: "Go to",
+      icon: Home,
+      run: () => goto("main"),
+    },
+    {
+      id: "settings",
+      label: "Settings",
+      group: "Go to",
+      icon: Settings,
+      run: () => goto("settings"),
+    },
+    {
+      id: "design",
+      label: "Design / Style guide",
+      group: "Go to",
+      icon: Palette,
+      run: () => goto("design"),
+    },
+    {
+      id: "diagnostics",
+      label: "Diagnostics",
+      group: "Go to",
+      icon: Activity,
+      run: () => goto("diagnostics"),
+    },
+    {
+      id: "jingle",
+      label: "Jingle studio",
+      group: "Go to",
+      icon: Music,
+      run: () => goto("jingle"),
+    },
+    {
+      id: "view-record",
+      label: "Recording workspace",
+      group: "Project",
+      icon: Mic,
+      disabled: !hasProject,
+      run: () => {
+        setProjectView("record");
+        goto("main");
+      },
+    },
+    {
+      id: "view-edit",
+      label: "Editing workspace",
+      group: "Project",
+      icon: Scissors,
+      disabled: !hasProject,
+      run: () => {
+        setProjectView("edit");
+        goto("main");
+      },
+    },
+    {
+      id: "close-project",
+      label: "Close project",
+      group: "Project",
+      icon: FolderX,
+      disabled: !hasProject,
+      run: closeProject,
+    },
+  ];
+
   return (
     <div className="min-h-screen bg-[var(--color-bg)] text-[var(--color-fg)]">
       {content}
+      <CommandPalette commands={commands} />
     </div>
   );
 }
