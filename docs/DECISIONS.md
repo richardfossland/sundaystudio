@@ -6,7 +6,7 @@ first. Each entry: the decision, the context, and the alternative we rejected.
 ## ADR-0001 — Tauri 2 + Rust audio core (Phase 0.1)
 
 **Decision.** Build on Tauri 2 with a Rust backend, matching SundayStage,
-SundayPaper and Verbatim. The audio engine is native Rust (cpal + hound to
+SundayPaper and SundayEdit. The audio engine is native Rust (cpal + hound to
 start, growing into a dedicated real-time thread).
 
 **Context.** SundayStudio's hard problem is low-latency, reliable, multi-track
