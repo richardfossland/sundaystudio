@@ -1,0 +1,19 @@
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"></stop><stop offset="1" stop-color="#f4efe3"></stop></linearGradient>
+    <clipPath id="clip"><rect width="1024" height="1024" rx="228"></rect></clipPath>
+  </defs>
+  <g clip-path="url(#clip)">
+    <rect width="1024" height="1024" fill="url(#bg)"></rect>
+    <path d="M 308 804 L 308 512 A 204 204 0 0 1 716 512 L 716 804 Z" fill="#EAD7B4"></path>
+    <rect x="497.0" y="169.8" width="30.0" height="196.5" rx="4.0" fill="#28304A"></rect>
+    <rect x="449.6" y="224.1" width="124.8" height="30.0" rx="4.0" fill="#28304A"></rect>
+    <path d="M 398 474 L 398 558 A 114 114 0 0 0 626 558 L 626 474" fill="none" stroke="#28304A" stroke-width="26" stroke-linecap="round"></path>
+    <rect x="498" y="648" width="28" height="92" rx="13" fill="#28304A"></rect>
+    <rect x="432" y="732" width="160" height="30" rx="15" fill="#28304A"></rect>
+    <rect x="440" y="360" width="144" height="280" rx="72" fill="#28304A" stroke="#ffffff" stroke-width="14"></rect>
+    <rect x="474" y="408" width="76" height="11" rx="5.5" fill="#ffffff" opacity="0.9"></rect>
+    <rect x="474" y="442" width="76" height="11" rx="5.5" fill="#ffffff" opacity="0.9"></rect>
+    <rect x="474" y="476" width="76" height="11" rx="5.5" fill="#ffffff" opacity="0.9"></rect>
+  </g>
+</svg>
