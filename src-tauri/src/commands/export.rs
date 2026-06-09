@@ -344,7 +344,11 @@ fn ffmpeg_bin() -> String {
 fn sidecar_ffmpeg() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
-    let file = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    let file = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
     let candidate = dir.join(file);
     candidate
         .is_file()

@@ -145,7 +145,10 @@ pub fn export_presets() -> Vec<ExportPresetInfo> {
 
 /// Look up an export preset by id.
 pub fn preset_by_id(id: &str) -> Option<ExportPresetInfo> {
-    PRESETS.iter().find(|p| p.id == id).map(StaticPreset::to_info)
+    PRESETS
+        .iter()
+        .find(|p| p.id == id)
+        .map(StaticPreset::to_info)
 }
 
 #[cfg(test)]

@@ -83,7 +83,11 @@ mod tests {
         let spans = detect_silences(&s, SR, -50.0, 500.0);
         assert_eq!(spans.len(), 1);
         let gap = spans[0];
-        assert!((gap.start_ms - 300.0).abs() < 20.0, "start {}", gap.start_ms);
+        assert!(
+            (gap.start_ms - 300.0).abs() < 20.0,
+            "start {}",
+            gap.start_ms
+        );
         assert!((gap.end_ms - 1100.0).abs() < 20.0, "end {}", gap.end_ms);
     }
 

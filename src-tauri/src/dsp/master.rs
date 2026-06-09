@@ -316,7 +316,10 @@ mod tests {
     fn normalize_reaches_loud_target_without_clipping() {
         // A quiet sine normalised up to Spotify's -14 LUFS: the limiter must
         // hold the ceiling while we get close to target loudness.
-        let mut buf = sine(300.0, SR_F, SR as usize * 6).iter().map(|s| s * 0.15).collect::<Vec<_>>();
+        let mut buf = sine(300.0, SR_F, SR as usize * 6)
+            .iter()
+            .map(|s| s * 0.15)
+            .collect::<Vec<_>>();
         let target = target_by_id("spotify").unwrap(); // -14 LUFS, -1 dBTP
         let mut chain = MasterChain::voice();
         let report = master_normalize(&mut buf, 1, SR, &target, &mut chain).unwrap();

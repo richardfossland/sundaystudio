@@ -229,7 +229,13 @@ pub async fn project_new(
     // Sanitise the folder name (replace file-system-unsafe chars with '_').
     let safe: String = name
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == ' ' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == ' ' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let scast_dir = data_dir.join(format!("{safe}.scast"));
 

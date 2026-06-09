@@ -281,7 +281,15 @@ pub async fn add_take(
     duration_ms: f64,
     source_tracks: &[String],
 ) -> AppResult<Take> {
-    add_take_with_id(pool, &new_id(), project_id, started_at, duration_ms, source_tracks).await
+    add_take_with_id(
+        pool,
+        &new_id(),
+        project_id,
+        started_at,
+        duration_ms,
+        source_tracks,
+    )
+    .await
 }
 
 /// Insert a take row under an explicit id. The live recorder mints the id with

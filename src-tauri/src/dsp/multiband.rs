@@ -29,8 +29,10 @@ impl Lr4 {
     const BUTTERWORTH_Q: f32 = std::f32::consts::FRAC_1_SQRT_2; // 0.7071
 
     fn set(&mut self, ftype: FilterType, sample_rate: f32, freq: f32) {
-        self.a.set(ftype, sample_rate, freq, Self::BUTTERWORTH_Q, 0.0);
-        self.b.set(ftype, sample_rate, freq, Self::BUTTERWORTH_Q, 0.0);
+        self.a
+            .set(ftype, sample_rate, freq, Self::BUTTERWORTH_Q, 0.0);
+        self.b
+            .set(ftype, sample_rate, freq, Self::BUTTERWORTH_Q, 0.0);
     }
 
     #[inline]
@@ -101,10 +103,14 @@ impl MultibandCompressor {
 
 impl Effect for MultibandCompressor {
     fn prepare(&mut self, sample_rate: f32) {
-        self.lp1.set(FilterType::LowPass, sample_rate, self.low_xover_hz);
-        self.hp1.set(FilterType::HighPass, sample_rate, self.low_xover_hz);
-        self.lp2.set(FilterType::LowPass, sample_rate, self.high_xover_hz);
-        self.hp2.set(FilterType::HighPass, sample_rate, self.high_xover_hz);
+        self.lp1
+            .set(FilterType::LowPass, sample_rate, self.low_xover_hz);
+        self.hp1
+            .set(FilterType::HighPass, sample_rate, self.low_xover_hz);
+        self.lp2
+            .set(FilterType::LowPass, sample_rate, self.high_xover_hz);
+        self.hp2
+            .set(FilterType::HighPass, sample_rate, self.high_xover_hz);
         self.low.prepare(sample_rate);
         self.mid.prepare(sample_rate);
         self.high.prepare(sample_rate);
