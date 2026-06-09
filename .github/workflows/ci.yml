@@ -56,6 +56,12 @@ jobs:
       - name: Frontend unit tests
         run: npm run test
 
+      # The Rust build script validates the `externalBin` ffmpeg sidecar exists
+      # for the target triple, so it must be fetched before any cargo invocation
+      # (clippy/test trigger the tauri build script too, not just `tauri build`).
+      - name: Fetch ffmpeg sidecar
+        run: npm run fetch-ffmpeg
+
       # The Rust suite includes the audio engine tests. These are deliberately
       # device-INDEPENDENT (device enumeration tolerates zero devices; the tone
       # writer goes straight to disk) so they pass on a headless runner with no
@@ -98,6 +104,10 @@ jobs:
           workspaces: src-tauri
 
       - run: npm ci
+
+      # Sidecar must exist before the tauri build script validates externalBin.
+      - name: Fetch ffmpeg sidecar
+        run: npm run fetch-ffmpeg
 
       # Compiles the frontend + the Rust audio app on both first-class
       # platforms (CoreAudio on macOS, WASAPI on Windows). Bundling / signing /
