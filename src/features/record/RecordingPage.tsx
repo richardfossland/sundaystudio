@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -20,7 +21,7 @@ import { errorMessage, ipc } from "@/lib/ipc";
 import { useSession } from "@/lib/session";
 import { t } from "@/lib/i18n";
 import { useRecordingStatus } from "@/lib/useRecordingStatus";
-import type { ExportResult, Track } from "@/lib/bindings";
+import type { ExportPresetInfo, ExportResult, Track } from "@/lib/bindings";
 
 const TRACK_COLORS = [
   "#D4A73A",
@@ -32,14 +33,17 @@ const TRACK_COLORS = [
 ];
 
 /**
- * The recording page (Phase 2.2/2.3 shell): transport + the project's track
- * strips, bound to the open project. Track state (arm/mute/solo/gain) persists
- * through the project store; add tracks and chapter markers here too.
+ * The recording page (Phase 2.2/2.3): transport + the project's track strips,
+ * bound to the open project. Track state (arm/mute/solo/gain) persists through
+ * the project store; add tracks and chapter markers here too.
  *
- * The transport's record button is a visual placeholder: live multi-track
- * capture is wired through the recorder engine's cpal stream, which needs real
- * hardware to exercise (Phase 1.2 `stream` + integration in a hardware session).
- * Meters therefore read silence here.
+ * The transport now drives the real recorder engine: the record button calls
+ * `audio_record_start`/`audio_record_stop`, the timecode and per-track meters
+ * read the live `audio_record_status` poll, and stop lays the captured WAVs onto
+ * the timeline. The cpal input stream itself is HARDWARE-UNVERIFIED — it needs a
+ * real audio interface to exercise — but the UI↔engine wiring is live: with no
+ * device the start call surfaces the engine's error, and meters read silence
+ * (−60 dB) until a take is rolling.
  */
 export function RecordingPage({
   onBack,
@@ -58,15 +62,38 @@ export function RecordingPage({
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<ExportResult | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  // Default to a ready-to-publish MP3; the WAV master is always available too.
+  // (If ffmpeg is somehow missing, the backend keeps the WAV and says so in note.)
+  const [exportPreset, setExportPreset] = useState("general-podcast");
   const [backingUp, setBackingUp] = useState(false);
   const [backupNote, setBackupNote] = useState<{
     kind: "ok" | "error";
     text: string;
   } | null>(null);
 
-  // Poll the live transport for the safety surfaces (writer-failed / dropped).
-  // Polling stays on whenever a take is armed or rolling; idle status is cheap.
-  const { alerts } = useRecordingStatus({ enabled: recordState !== "idle" });
+  // The platform-ready export presets for the format picker (format + bitrate +
+  // LUFS target). Loaded once; falls back to just WAV if the call ever fails.
+  const { data: presets } = useQuery<ExportPresetInfo[]>({
+    queryKey: ["export_presets"],
+    queryFn: ipc.exporter.presets,
+  });
+
+  // Poll the live transport: the raw status drives the timecode + per-track
+  // meters, and the derived alerts surface the safety banners (writer-failed /
+  // dropped). Polling stays on whenever a take is armed or rolling; idle status
+  // is cheap and returns the idle snapshot.
+  const { status, alerts } = useRecordingStatus({
+    enabled: recordState !== "idle",
+  });
+
+  // Keep the UI in sync if the engine stops on its own — a writer/disk failure
+  // or a lost device ends the take backend-side, and the button must fall back
+  // to idle rather than claim it's still rolling.
+  useEffect(() => {
+    if (recordState === "recording" && status && !status.recording) {
+      setRecordState("idle");
+    }
+  }, [recordState, status]);
 
   if (!snapshot) return null;
   const { project, tracks, markers } = snapshot;
@@ -76,8 +103,9 @@ export function RecordingPage({
     setExportError(null);
     setExportResult(null);
     try {
-      // WAV is the natively-writable format today; mastered + normalised.
-      setExportResult(await ipc.exporter.render("wav-archival"));
+      // Mastered + loudness-normalised, then encoded to the chosen preset's
+      // format (MP3/AAC via the bundled ffmpeg; WAV is native).
+      setExportResult(await ipc.exporter.render(exportPreset));
     } catch (err) {
       setExportError(errorMessage(err));
     } finally {
@@ -106,6 +134,49 @@ export function RecordingPage({
 
   async function refresh() {
     setSnapshot(await ipc.project.snapshot());
+  }
+
+  // The record button's three-state flow, now wired to the engine:
+  //   idle → (tracks armed?) → armed → recording → idle
+  // Start arms one capture channel per project track (the engine maps channel i
+  // → track i, exactly how stop lays the WAVs onto the timeline) and honours the
+  // input device chosen in Settings. Stop finalises the take and refreshes the
+  // timeline. Failures surface through the same banner as every other mutation.
+  async function toggleRecord() {
+    if (recordState === "recording") {
+      setBusy(true);
+      setActionError(null);
+      try {
+        await ipc.audio.recordStop();
+        await refresh();
+        setRecordState("idle");
+      } catch (err) {
+        setActionError(`${t("recordActionFailed")}: ${errorMessage(err)}`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+    // Not rolling: first press arms (when nothing is armed yet), the next starts.
+    if (recordState !== "armed" && armedCount === 0) {
+      setRecordState("armed");
+      return;
+    }
+    setBusy(true);
+    setActionError(null);
+    try {
+      const settings = await ipc.audio.getSettings();
+      await ipc.audio.recordStart(
+        settings.input_device ?? undefined,
+        tracks.length,
+      );
+      setRecordState("recording");
+    } catch (err) {
+      setActionError(`${t("recordActionFailed")}: ${errorMessage(err)}`);
+      setRecordState("idle");
+    } finally {
+      setBusy(false);
+    }
   }
 
   // Track / marker mutations all flow through here. Previously a failed invoke
@@ -201,6 +272,21 @@ export function RecordingPage({
             )}
             {t("recordBackupProject")}
           </Button>
+          {presets && presets.length > 0 && (
+            <select
+              aria-label="Export format"
+              value={exportPreset}
+              onChange={(e) => setExportPreset(e.target.value)}
+              disabled={exporting}
+              className="rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-2 py-1 text-ui-xs"
+            >
+              {presets.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          )}
           <Button
             variant="surface"
             size="sm"
@@ -227,20 +313,13 @@ export function RecordingPage({
               )}
             </span>
           )}
-          <Timecode ms={0} size="md" />
+          <Timecode ms={status?.duration_ms ?? 0} size="md" />
           <div className="flex flex-col items-center gap-1">
             <RecordButton
               state={recordState}
               size={52}
-              onClick={() =>
-                setRecordState((s) =>
-                  s === "recording"
-                    ? "idle"
-                    : s === "armed" || armedCount > 0
-                      ? "recording"
-                      : "armed",
-                )
-              }
+              disabled={busy}
+              onClick={toggleRecord}
             />
           </div>
         </div>
@@ -266,12 +345,12 @@ export function RecordingPage({
         />
       )}
 
-      {/* Placeholder notice */}
+      {/* Capture notice */}
       <div className="flex items-center gap-2 bg-[var(--color-bg-surface)] px-5 py-2 text-ui-xs text-[var(--color-fg-muted)]">
         <Info size={13} className="shrink-0" />
-        Transport is a preview — live capture wires through the recorder engine
-        on real audio hardware. Track settings and chapters below are saved to
-        the project.
+        Each take writes continuously to disk, one WAV per track — a crash
+        leaves a playable file. Track settings and chapters below are saved to
+        the project. Recording needs a connected audio input.
       </div>
 
       {/* Backup confirmation toast (inline, auto-dismissing) */}
@@ -332,11 +411,11 @@ export function RecordingPage({
           </div>
         ) : (
           <div className="space-y-2">
-            {tracks.map((t) => (
+            {tracks.map((track, idx) => (
               <TrackHeader
-                key={t.id}
-                track={toTrackState(t)}
-                onChange={(patch) => saveTrack(t, patch)}
+                key={track.id}
+                track={toTrackState(track, status?.meters_dbfs?.[idx])}
+                onChange={(patch) => saveTrack(track, patch)}
               />
             ))}
             <Button variant="surface" onClick={addTrack} disabled={busy}>
@@ -385,17 +464,19 @@ export function RecordingPage({
   );
 }
 
-function toTrackState(t: Track): TrackState {
+function toTrackState(track: Track, meterDb?: number | null): TrackState {
+  // The engine reports one per-channel peak (dBFS) per poll; channel i maps to
+  // track i. serde renders -inf as null, so coalesce null/undefined to silence.
+  const level = meterDb ?? -60;
   return {
-    name: t.name,
-    color: t.color,
-    armed: t.armed,
-    muted: t.mute,
-    soloed: t.solo,
+    name: track.name,
+    color: track.color,
+    armed: track.armed,
+    muted: track.mute,
+    soloed: track.solo,
     monitoring: false,
-    gainDb: t.gain_db,
-    // No live engine in this shell — meters read silence.
-    levelDb: -60,
-    peakDb: -60,
+    gainDb: track.gain_db,
+    levelDb: level,
+    peakDb: level,
   };
 }

@@ -360,7 +360,10 @@ mod tests {
         let m = measure(&sine(997.0, 1.0, 2.0), 1, SR).unwrap();
         let tp = m.true_peak_dbtp.unwrap();
         // Inter-sample peak of a near-full-scale sine sits around 0 dBTP.
-        assert!((-0.5..=1.0).contains(&tp), "true peak {tp} dBTP out of range");
+        assert!(
+            (-0.5..=1.0).contains(&tp),
+            "true peak {tp} dBTP out of range"
+        );
         let sp = m.sample_peak_dbfs.unwrap();
         assert!(sp <= 0.1 && sp > -0.5, "sample peak {sp} dBFS out of range");
     }
@@ -413,7 +416,10 @@ mod tests {
         assert!(report.gain_capped_by_peak, "report = {report:?}");
         // Never exceed the ceiling: the cap keeps true peak at/under it.
         let tp_after = report.after.true_peak_dbtp.unwrap();
-        assert!(tp_after <= target.true_peak_ceiling_dbtp + 0.3, "tp {tp_after}");
+        assert!(
+            tp_after <= target.true_peak_ceiling_dbtp + 0.3,
+            "tp {tp_after}"
+        );
         assert!(buf.iter().all(|s| s.abs() <= 1.0001));
     }
 }

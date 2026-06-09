@@ -127,10 +127,18 @@ async fn recorded_take_lands_on_the_timeline_with_full_length_regions() {
         assert_eq!(r.start_in_take_ms, 0.0);
         assert_eq!(r.position_in_timeline_ms, 0.0);
         // 24 000 samples / 48 kHz = 500 ms.
-        assert!((r.end_in_take_ms - 500.0).abs() < 0.001, "{}", r.end_in_take_ms);
+        assert!(
+            (r.end_in_take_ms - 500.0).abs() < 0.001,
+            "{}",
+            r.end_in_take_ms
+        );
     }
     // Each region targets a distinct project track.
-    let mut targets: Vec<&String> = timeline.regions.iter().map(|r| &r.target_track_id).collect();
+    let mut targets: Vec<&String> = timeline
+        .regions
+        .iter()
+        .map(|r| &r.target_track_id)
+        .collect();
     targets.sort();
     targets.dedup();
     assert_eq!(targets.len(), 2, "regions cover both tracks");

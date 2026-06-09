@@ -17,11 +17,14 @@ export function RecordButton({
   state = "idle",
   size = 72,
   onClick,
+  disabled = false,
   className,
 }: {
   state?: RecordState;
   size?: number;
   onClick?: () => void;
+  /** Disable while a start/stop transition is in flight. */
+  disabled?: boolean;
   className?: string;
 }) {
   const recording = state === "recording";
@@ -30,10 +33,11 @@ export function RecordButton({
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       aria-label={recording ? "Stop recording" : "Record"}
       aria-pressed={recording}
       className={cn(
-        "relative grid place-items-center rounded-full transition-[transform,box-shadow] duration-[var(--duration-fast)] active:scale-95",
+        "relative grid place-items-center rounded-full transition-[transform,box-shadow] duration-[var(--duration-fast)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-60",
         className,
       )}
       style={{ width: size, height: size }}

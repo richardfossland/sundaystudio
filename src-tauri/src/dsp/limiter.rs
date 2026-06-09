@@ -130,7 +130,10 @@ impl Effect for Limiter {
             while self.window.back().is_some_and(|b| b.gain >= g) {
                 self.window.pop_back();
             }
-            self.window.push_back(GainAt { index: self.n, gain: g });
+            self.window.push_back(GainAt {
+                index: self.n,
+                gain: g,
+            });
             // Drop entries that have fallen out of the look-ahead window.
             let oldest = self.n.saturating_sub(self.lookahead as u64);
             while self.window.front().is_some_and(|f| f.index < oldest) {
@@ -193,7 +196,10 @@ mod tests {
         let mut lim = Limiter::brickwall(-1.0);
         lim.prepare(SR);
         // Well below the ceiling → gain stays at unity, only delayed.
-        let input = sine(220.0, SR, 12_000).iter().map(|s| s * 0.3).collect::<Vec<_>>();
+        let input = sine(220.0, SR, 12_000)
+            .iter()
+            .map(|s| s * 0.3)
+            .collect::<Vec<_>>();
         let mut buf = input.clone();
         lim.process(&mut buf);
         let l = lim.latency_samples();
@@ -215,6 +221,10 @@ mod tests {
         }
         lim.process(&mut buf);
         let ceiling = db_to_gain(-1.0);
-        assert!(peak(&buf) <= ceiling + 1e-3, "transient overshoot: {}", peak(&buf));
+        assert!(
+            peak(&buf) <= ceiling + 1e-3,
+            "transient overshoot: {}",
+            peak(&buf)
+        );
     }
 }

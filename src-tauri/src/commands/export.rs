@@ -316,17 +316,43 @@ fn encode_master(
             }
         })?;
     let encoded = wav_path.with_extension(plan.extension);
-    // `"ffmpeg"` resolves the bundled sidecar via PATH today; a missing binary
-    // returns FfmpegUnavailable so the caller can fall back to the WAV master.
-    encode::encode_with_ffmpeg(ffmpeg_bin(), &plan, wav_path, &encoded)?;
+    // The resolver prefers the bundled sidecar; a missing binary returns
+    // FfmpegUnavailable so the caller can fall back to the WAV master.
+    encode::encode_with_ffmpeg(&ffmpeg_bin(), &plan, wav_path, &encoded)?;
     Ok(encoded)
 }
 
-/// Resolve the ffmpeg binary to invoke. Bundling the sidecar and pointing this at
-/// the resource path is a later packaging step (FFMPEG-SIDECAR-UNVERIFIED); until
-/// then we use `ffmpeg` from PATH and degrade gracefully if it's absent.
-fn ffmpeg_bin() -> &'static str {
-    "ffmpeg"
+/// Resolve the ffmpeg binary to invoke. Precedence: an explicit override
+/// (`SUNDAYSTUDIO_FFMPEG`, for dev/tests) → the bundled `externalBin` sidecar
+/// dropped next to the executable by `tauri build` → bare `"ffmpeg"` on PATH.
+/// Mirrors SundayRec's `media::ffmpeg::ffmpeg_path`. A missing binary degrades
+/// to FfmpegUnavailable downstream (the user still gets the master WAV).
+fn ffmpeg_bin() -> String {
+    if let Ok(p) = std::env::var("SUNDAYSTUDIO_FFMPEG") {
+        if !p.is_empty() {
+            return p;
+        }
+    }
+    if let Some(p) = sidecar_ffmpeg() {
+        return p;
+    }
+    "ffmpeg".to_string()
+}
+
+/// Look for `ffmpeg` next to the current executable — where Tauri places bundled
+/// `externalBin` sidecars at runtime. `None` in dev builds (before `tauri build`).
+fn sidecar_ffmpeg() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let file = if cfg!(windows) {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
+    };
+    let candidate = dir.join(file);
+    candidate
+        .is_file()
+        .then(|| candidate.to_string_lossy().into_owned())
 }
 
 /// Make a filesystem-safe file stem from a project name.
