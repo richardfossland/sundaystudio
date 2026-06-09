@@ -18,6 +18,7 @@
 //!   ai       Anthropic / Suno wrappers (Phase 5/6)
 //! Command implementations live in `commands::*` — this file only registers them.
 
+pub mod account;
 pub mod ai;
 pub mod audio;
 pub mod commands;
@@ -73,6 +74,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Sunday Account (SSO) — shared cross-app session
+            commands::account::sunday_account_status,
+            commands::account::sunday_sign_out,
             commands::app::app_info,
             commands::audio::audio_devices,
             commands::audio::audio_record_test_tone,

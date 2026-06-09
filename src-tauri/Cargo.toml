@@ -19,6 +19,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+# Shared Sunday Account (SSO): read the cross-app session this app shares with
+# the rest of the suite (login happens in SundayRec). Path dep for local dev;
+# switch to the git-tag form for release (see sunday-platform README).
+sunday-auth = { path = "../../sunday-platform/crates/sunday-auth" }
 # Native file dialogs for New/Open project (Phase 2.3).
 tauri-plugin-dialog = "2"
 # Inbound `sundaystudio://import` deep links — the Rec → Studio handoff. The

@@ -5,6 +5,7 @@
 //! and return `Result<T, AppError>`. Naming convention: `entity_verb`
 //! (e.g. `app_info`, `audio_devices`, `audio_record_test_tone`).
 
+pub mod account;
 pub mod app;
 pub mod audio;
 pub mod deeplink;
