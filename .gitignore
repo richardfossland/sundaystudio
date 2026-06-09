@@ -16,6 +16,9 @@ dist-ssr
 src-tauri/target
 src-tauri/gen/schemas
 
+# ffmpeg sidecar binaries (fetched per-platform, never committed)
+src-tauri/binaries
+
 # Test artifacts
 coverage
 playwright-report

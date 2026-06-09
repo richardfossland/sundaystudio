@@ -424,4 +424,48 @@ mod tests {
         let did = encode_with_ffmpeg("ffmpeg", &plan, &p("in.wav"), &p("out.wav")).unwrap();
         assert!(!did);
     }
+
+    /// Real WAV → MP3 round-trip through a present ffmpeg. Skipped unless
+    /// `SUNDAYSTUDIO_FFMPEG` points at a binary (set automatically by
+    /// `npm run fetch-ffmpeg` locally; absent in the offline gate) — this is the
+    /// one check that exercises the actual spawn rather than the arg shape.
+    #[test]
+    fn encodes_a_real_wav_to_mp3_when_ffmpeg_is_present() {
+        let Ok(bin) = std::env::var("SUNDAYSTUDIO_FFMPEG") else {
+            eprintln!("skipping: SUNDAYSTUDIO_FFMPEG not set");
+            return;
+        };
+        if bin.is_empty() || !std::path::Path::new(&bin).is_file() {
+            eprintln!("skipping: SUNDAYSTUDIO_FFMPEG does not point at a file");
+            return;
+        }
+
+        let dir = std::env::temp_dir().join(format!("sundaystudio-encode-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wav = dir.join("in.wav");
+        let mp3 = dir.join("out.mp3");
+
+        // A short stereo 48 kHz sine — enough for ffmpeg to produce a real frame.
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate: 48_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut w = hound::WavWriter::create(&wav, spec).unwrap();
+        for n in 0..48_000 {
+            let s = ((n as f32 * 440.0 * std::f32::consts::TAU / 48_000.0).sin() * 8_000.0) as i16;
+            w.write_sample(s).unwrap();
+            w.write_sample(s).unwrap();
+        }
+        w.finalize().unwrap();
+
+        let plan = plan_encode(ExportFormat::Mp3, Some(192), 2, 48_000).unwrap();
+        let did = encode_with_ffmpeg(&bin, &plan, &wav, &mp3).unwrap();
+        assert!(did, "mp3 plan should have been encoded");
+        let meta = std::fs::metadata(&mp3).expect("mp3 output exists");
+        assert!(meta.len() > 0, "mp3 output must be non-empty");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
