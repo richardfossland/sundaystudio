@@ -3,13 +3,39 @@
 /**
  * A validated request to import a recording into a project, parsed from a
  * `sundaystudio://import?…` deep link. The renderer turns this into a real
- * take/project via the normal import flow.
+ * take/project via the normal import flow. Carries the full canonical
+ * `MediaHandoff` field set (sunday-contracts v0.4.0).
  */
 export type ImportRequest = { 
 /**
  * Absolute path to the source audio/video file. Always present.
  */
 path: string, 
+/**
+ * `"video"` or `"audio"`, when the caller declared it; anything else
+ * degrades to `None` rather than failing the import.
+ */
+media_kind: string | null, 
+/**
+ * ISO language code of the recording, if the caller specified one.
+ */
+language: string | null, 
+/**
+ * Free-text priming for context-aware processing.
+ */
+context: string | null, 
+/**
+ * Glossary terms (speaker names, jargon) — de-duplicated, order preserved.
+ */
+glossary: Array<string>, 
+/**
+ * Originating service id, so the project can link back to it.
+ */
+service_id: string | null, 
+/**
+ * Originating tenant id.
+ */
+church_id: string | null, 
 /**
  * Scheme of the app that launched us, so we can hand a result back later
  * (e.g. `"sundayrec"`). `None` for a plain user-initiated link.
