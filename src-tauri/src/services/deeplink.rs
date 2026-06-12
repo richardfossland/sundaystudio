@@ -8,20 +8,28 @@
 //! lifecycle, emitting the parsed request to the renderer — lives in `lib.rs`;
 //! the renderer drives the actual import via the existing project/take flows.
 //!
-//! Contract (mirrors sunday-contracts `MediaHandoff`; converge once published —
-//! today we own the post-name `sundaystudio://` scheme and SundayRec already
-//! sends the shape below):
+//! Contract: FIELD-IDENTICAL parse of the canonical `MediaHandoff` deep link
+//! (sunday-platform `sunday-contracts` v0.4.0, `packages/contracts/src/deeplink.ts`
+//! / `crates/sunday-contracts/src/deeplink.rs`) — the same grammar SundayEdit
+//! and SundayRec speak; we own the `sundaystudio://` scheme:
 //!
 //! ```text
 //! sundaystudio://import
 //!   ?path=<absolute path to the source audio/video, REQUIRED>
-//!   &returnTo=<caller scheme, optional>       e.g. "sundayrec"
+//!   &media_kind=<"video"|"audio", optional>   (alias: kind)
+//!   &language=<ISO code, optional>            (alias: lang)       e.g. "no"
+//!   &context=<free-text priming, optional>    e.g. "Sermon, speaker: Ola"
+//!   &glossary=<comma-separated terms>         de-duplicated, order preserved
+//!   &service_id=<originating service, optional>
+//!   &church_id=<originating tenant, optional>
+//!   &returnTo=<caller scheme, optional>       (alias: return_to)  e.g. "sundayrec"
 //! ```
 //!
 //! Everything is percent-decoded (`+` is also treated as a space, per the
 //! `application/x-www-form-urlencoded` convention). Unknown query keys are
-//! ignored so the contract can grow (language, context, …) without breaking
-//! older builds — mirrors the same forward-compatibility SundayEdit relies on.
+//! ignored so the contract can grow without breaking older builds — the same
+//! forward-compatibility SundayEdit relies on. Do not add or rename fields
+//! without changing the canonical contract first.
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -35,12 +43,26 @@ pub const ACTION_IMPORT: &str = "import";
 
 /// A validated request to import a recording into a project, parsed from a
 /// `sundaystudio://import?…` deep link. The renderer turns this into a real
-/// take/project via the normal import flow.
+/// take/project via the normal import flow. Carries the full canonical
+/// `MediaHandoff` field set (sunday-contracts v0.4.0).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../src/lib/bindings/ImportRequest.ts")]
 pub struct ImportRequest {
     /// Absolute path to the source audio/video file. Always present.
     pub path: String,
+    /// `"video"` or `"audio"`, when the caller declared it; anything else
+    /// degrades to `None` rather than failing the import.
+    pub media_kind: Option<String>,
+    /// ISO language code of the recording, if the caller specified one.
+    pub language: Option<String>,
+    /// Free-text priming for context-aware processing.
+    pub context: Option<String>,
+    /// Glossary terms (speaker names, jargon) — de-duplicated, order preserved.
+    pub glossary: Vec<String>,
+    /// Originating service id, so the project can link back to it.
+    pub service_id: Option<String>,
+    /// Originating tenant id.
+    pub church_id: Option<String>,
     /// Scheme of the app that launched us, so we can hand a result back later
     /// (e.g. `"sundayrec"`). `None` for a plain user-initiated link.
     pub return_to: Option<String>,
@@ -71,6 +93,12 @@ pub fn parse_import_url(url: &str) -> AppResult<ImportRequest> {
     }
 
     let mut path: Option<String> = None;
+    let mut media_kind: Option<String> = None;
+    let mut language: Option<String> = None;
+    let mut context: Option<String> = None;
+    let mut glossary: Vec<String> = Vec::new();
+    let mut service_id: Option<String> = None;
+    let mut church_id: Option<String> = None;
     let mut return_to: Option<String> = None;
 
     for pair in query.split('&').filter(|s| !s.is_empty()) {
@@ -79,6 +107,12 @@ pub fn parse_import_url(url: &str) -> AppResult<ImportRequest> {
         let value = decode_component(raw_val);
         match key.as_str() {
             "path" => path = non_empty(value),
+            "media_kind" | "kind" => media_kind = parse_media_kind(&value),
+            "language" | "lang" => language = non_empty(value),
+            "context" => context = non_empty(value),
+            "glossary" => glossary = split_glossary(&value),
+            "service_id" => service_id = non_empty(value),
+            "church_id" => church_id = non_empty(value),
             "returnTo" | "return_to" => return_to = non_empty(value),
             _ => {} // forward-compatible: ignore unknown keys
         }
@@ -94,7 +128,47 @@ pub fn parse_import_url(url: &str) -> AppResult<ImportRequest> {
     // read a file relative to our working directory.
     validate_import_path(&path)?;
 
-    Ok(ImportRequest { path, return_to })
+    Ok(ImportRequest {
+        path,
+        media_kind,
+        language,
+        context,
+        glossary,
+        service_id,
+        church_id,
+        return_to,
+    })
+}
+
+/// Only the canonical `MediaKind` values pass; anything else degrades to
+/// `None` rather than failing the import (matches the canonical parser).
+fn parse_media_kind(value: &str) -> Option<String> {
+    let v = value.trim().to_ascii_lowercase();
+    if v == "video" || v == "audio" {
+        Some(v)
+    } else {
+        None
+    }
+}
+
+/// Comma-separated → trimmed, non-empty, case-insensitively de-duplicated,
+/// order preserved (matches the canonical `splitGlossary` / SundayEdit).
+fn split_glossary(value: &str) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut out: Vec<String> = Vec::new();
+    for term in value.split(',') {
+        let t = term.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let lower = t.to_lowercase();
+        if seen.contains(&lower) {
+            continue;
+        }
+        seen.push(lower);
+        out.push(t.to_string());
+    }
+    out
 }
 
 /// Reject any import path that isn't a clean absolute path: a relative path, or
@@ -240,6 +314,49 @@ mod tests {
         let req = parse_import_url(url).unwrap();
         assert_eq!(req.path, "/Users/ola/sermon.wav");
         assert_eq!(req.return_to.as_deref(), Some("sundayrec"));
+        // Fields the caller didn't send stay empty/None.
+        assert_eq!(req.media_kind, None);
+        assert_eq!(req.language, None);
+        assert_eq!(req.context, None);
+        assert!(req.glossary.is_empty());
+        assert_eq!(req.service_id, None);
+        assert_eq!(req.church_id, None);
+    }
+
+    #[test]
+    fn parses_the_full_canonical_media_handoff_field_set() {
+        // The complete canonical MediaHandoff grammar (sunday-contracts v0.4.0).
+        let url = "sundaystudio://import?path=%2FUsers%2Fola%2Fsermon.mp4\
+                   &media_kind=video&language=no\
+                   &context=Preken%2C%20taler%3A%20Ola%20Nordmann\
+                   &glossary=Ola%20Nordmann,kerygma,%20kerygma%20,Agape\
+                   &service_id=svc-123&church_id=ch-456&returnTo=sundayrec";
+        let req = parse_import_url(url).unwrap();
+        assert_eq!(req.path, "/Users/ola/sermon.mp4");
+        assert_eq!(req.media_kind.as_deref(), Some("video"));
+        assert_eq!(req.language.as_deref(), Some("no"));
+        assert_eq!(req.context.as_deref(), Some("Preken, taler: Ola Nordmann"));
+        // De-duplicated case-insensitively, order preserved.
+        assert_eq!(req.glossary, vec!["Ola Nordmann", "kerygma", "Agape"]);
+        assert_eq!(req.service_id.as_deref(), Some("svc-123"));
+        assert_eq!(req.church_id.as_deref(), Some("ch-456"));
+        assert_eq!(req.return_to.as_deref(), Some("sundayrec"));
+    }
+
+    #[test]
+    fn media_kind_accepts_the_kind_alias_and_degrades_unknown_values() {
+        let req = parse_import_url("sundaystudio://import?path=/a.wav&kind=AUDIO").unwrap();
+        assert_eq!(req.media_kind.as_deref(), Some("audio"));
+        // An unknown kind never fails the import — it just degrades to None.
+        let req =
+            parse_import_url("sundaystudio://import?path=/a.wav&media_kind=hologram").unwrap();
+        assert_eq!(req.media_kind, None);
+    }
+
+    #[test]
+    fn language_accepts_the_lang_alias() {
+        let req = parse_import_url("sundaystudio://import?path=/a.wav&lang=no").unwrap();
+        assert_eq!(req.language.as_deref(), Some("no"));
     }
 
     #[test]
