@@ -24,7 +24,7 @@ tauri = { version = "2", features = [] }
 # (see sunday-platform README) so each app builds standalone in CI — a path dep
 # would break the single-repo checkout. For local sunday-auth co-dev, override
 # with a `[patch]` in .cargo/config.toml.
-sunday-auth = { git = "https://github.com/richardfossland/sunday-platform.git", tag = "v0.2.0" }
+sunday-auth = { git = "https://github.com/richardfossland/sunday-platform.git", tag = "v0.3.0" }
 # Native file dialogs for New/Open project (Phase 2.3).
 tauri-plugin-dialog = "2"
 # Inbound `sundaystudio://import` deep links — the Rec → Studio handoff. The
