@@ -54,6 +54,7 @@ export function RecordingPage({
 }) {
   const snapshot = useSession((s) => s.snapshot);
   const setSnapshot = useSession((s) => s.setSnapshot);
+  const chapters = useSession((s) => s.chapters);
   const [recordState, setRecordState] = useState<
     "idle" | "armed" | "recording"
   >("idle");
@@ -104,8 +105,16 @@ export function RecordingPage({
     setExportResult(null);
     try {
       // Mastered + loudness-normalised, then encoded to the chosen preset's
-      // format (MP3/AAC via the bundled ffmpeg; WAV is native).
-      setExportResult(await ipc.exporter.render(exportPreset));
+      // format (MP3/AAC via the bundled ffmpeg; WAV is native). Any chapters the
+      // user curated in the editor's show-notes panel ride along and become
+      // ffmpeg chapter metadata on the encoded file (ignored for a plain WAV).
+      setExportResult(
+        await ipc.exporter.render(
+          exportPreset,
+          undefined,
+          chapters.length > 0 ? chapters : undefined,
+        ),
+      );
     } catch (err) {
       setExportError(errorMessage(err));
     } finally {

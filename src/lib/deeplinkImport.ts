@@ -17,10 +17,17 @@
  */
 
 import type { ipc as Ipc } from "./ipc";
-import type { ProjectMeta } from "./bindings";
+import type { ImportRequest, ProjectMeta } from "./bindings";
 
 /** The slice of the IPC surface the seeder needs (for easy mocking in tests). */
 export type ImportSeederIpc = Pick<typeof Ipc, "deeplink" | "project" | "edit">;
+
+/** The outcome of seeding: the created project plus the parsed handoff, so the
+ *  caller can carry `context`/`glossary` into the show-notes panel. */
+export interface SeededImport {
+  meta: ProjectMeta;
+  request: ImportRequest;
+}
 
 /** Derive a human project name from an imported file path (basename, no ext). */
 export function projectNameFromPath(path: string): string {
@@ -31,7 +38,8 @@ export function projectNameFromPath(path: string): string {
 
 /**
  * Parse `url` and seed a new project from it, importing the referenced file as
- * the project's first take. Returns the created project's registry entry.
+ * the project's first take. Returns the created project plus the parsed handoff
+ * (so the caller can seed the show-notes panel's context/glossary).
  *
  * Throws (an `IPCError` from `deeplink_parse_import`) for a malformed link or a
  * missing path — the caller surfaces the message.
@@ -39,11 +47,11 @@ export function projectNameFromPath(path: string): string {
 export async function seedProjectFromImportLink(
   client: ImportSeederIpc,
   url: string,
-): Promise<ProjectMeta> {
+): Promise<SeededImport> {
   const request = await client.deeplink.parseImport(url);
   // `project.new` creates AND makes the project current, so the subsequent
   // `take_import` lands on it without an explicit open.
   const meta = await client.project.new(projectNameFromPath(request.path));
   await client.edit.importTakes([request.path]);
-  return meta;
+  return { meta, request };
 }

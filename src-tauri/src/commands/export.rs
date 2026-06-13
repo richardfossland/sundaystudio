@@ -24,7 +24,7 @@ use crate::dsp::loudness::{self, LoudnessTarget, NormalizationReport};
 use crate::dsp::master::MasterPreset;
 use crate::dsp::Effect;
 use crate::error::{AppError, AppResult};
-use crate::export::encode::{self, EncodeError};
+use crate::export::encode::{self, EncodeError, ExportChapter};
 use crate::export::format::{self, ExportFormat, ExportPresetInfo};
 use crate::export::render::{self, MixSource, PlacedClip};
 use crate::project::{scast, store};
@@ -74,6 +74,19 @@ pub struct ExportResult {
     pub note: Option<String>,
 }
 
+/// One chapter to embed in the exported file, as supplied by the renderer
+/// (AI-suggested show-notes chapters the user accepted, or manual ones). The
+/// backend re-sorts and clamps these into the take before they reach ffmpeg, so
+/// an out-of-order or zero-length chapter can never be embedded.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "../../src/lib/bindings/ExportChapterInput.ts")]
+pub struct ExportChapterInput {
+    /// Chapter start, in milliseconds from the top of the programme.
+    pub start_ms: f64,
+    /// Short chapter title shown by the podcast player.
+    pub title: String,
+}
+
 /// The platform-ready export presets (format + bitrate + channels + LUFS target).
 #[tauri::command]
 pub fn export_presets() -> AppResult<Vec<ExportPresetInfo>> {
@@ -81,12 +94,16 @@ pub fn export_presets() -> AppResult<Vec<ExportPresetInfo>> {
 }
 
 /// Bounce the open project's latest take to a mastered, normalised WAV. Pass an
-/// optional mastering-preset id (defaults to "conversation-podcast").
+/// optional mastering-preset id (defaults to "conversation-podcast") and an
+/// optional list of `chapters` to embed in the encoded delivery file (MP3/AAC/
+/// FLAC) as ffmpeg chapter metadata. Chapters are ignored for a plain WAV bounce
+/// (WAV carries no chapters) and when the ffmpeg sidecar is unavailable.
 #[tauri::command]
 pub async fn export_render(
     state: State<'_, ProjectState>,
     preset_id: String,
     master_preset_id: Option<String>,
+    chapters: Option<Vec<ExportChapterInput>>,
 ) -> AppResult<ExportResult> {
     let preset = format::preset_by_id(&preset_id)
         .ok_or_else(|| AppError::Validation(format!("unknown export preset: {preset_id}")))?;
@@ -159,10 +176,37 @@ pub async fn export_render(
 
     let channels = preset.channels;
 
+    // Normalise the renderer's chapters into the engine type. We re-sort by start
+    // and drop blank titles here so the FFMETADATA builder only ever sees a clean,
+    // ordered list — the engine decides what's safe to embed, never the caller.
+    let chapters: Vec<ExportChapter> = {
+        let mut cs: Vec<ExportChapter> = chapters
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|c| {
+                let title = c.title.trim().to_string();
+                if title.is_empty() {
+                    None
+                } else {
+                    Some(ExportChapter {
+                        start_ms: c.start_ms.max(0.0),
+                        title,
+                    })
+                }
+            })
+            .collect();
+        cs.sort_by(|a, b| {
+            a.start_ms
+                .partial_cmp(&b.start_ms)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        cs
+    };
+
     // Mixing, DSP and file IO are CPU/blocking — keep them off the async runtime.
     tokio::task::spawn_blocking(move || {
         render_and_write(
-            plans, &out_path, channels, rate, master, &target, &preset, &preset_id,
+            plans, &out_path, channels, rate, master, &target, &preset, &preset_id, &chapters,
         )
     })
     .await
@@ -183,6 +227,7 @@ fn render_and_write(
     target: &LoudnessTarget,
     preset: &ExportPresetInfo,
     preset_id: &str,
+    chapters: &[ExportChapter],
 ) -> AppResult<ExportResult> {
     let mut cache: HashMap<PathBuf, Vec<f32>> = HashMap::new();
     let mut sources = Vec::with_capacity(plans.len());
@@ -254,7 +299,7 @@ fn render_and_write(
     let mut encoder_note: Option<String> = None;
 
     if preset.requires_encoder {
-        match encode_master(out_path, channels, rate, preset) {
+        match encode_master(out_path, channels, rate, preset, chapters, duration_ms) {
             Ok(encoded) => {
                 bytes = std::fs::metadata(&encoded).map(|m| m.len()).unwrap_or(0);
                 output_path = encoded;
@@ -307,6 +352,8 @@ fn encode_master(
     channels: u16,
     rate: u32,
     preset: &ExportPresetInfo,
+    chapters: &[ExportChapter],
+    duration_ms: f64,
 ) -> Result<PathBuf, EncodeError> {
     let plan =
         encode::plan_encode(preset.format, preset.bitrate_kbps, channels, rate).map_err(|e| {
@@ -316,9 +363,29 @@ fn encode_master(
             }
         })?;
     let encoded = wav_path.with_extension(plan.extension);
+
+    // If we have usable chapters, write an FFMETADATA file next to the master and
+    // hand it to ffmpeg as a second input to embed. The file is best-effort: a
+    // write failure simply means we encode without chapters rather than failing
+    // the export. The temp file is removed afterwards.
+    let metadata_path = wav_path.with_extension("ffmeta.txt");
+    let metadata = encode::build_ffmetadata(chapters, duration_ms)
+        .filter(|body| std::fs::write(&metadata_path, body).is_ok())
+        .map(|_| metadata_path.clone());
+
     // The resolver prefers the bundled sidecar; a missing binary returns
     // FfmpegUnavailable so the caller can fall back to the WAV master.
-    encode::encode_with_ffmpeg(&ffmpeg_bin(), &plan, wav_path, &encoded)?;
+    let result = encode::encode_with_ffmpeg_chapters(
+        &ffmpeg_bin(),
+        &plan,
+        wav_path,
+        &encoded,
+        metadata.as_deref(),
+    );
+    if metadata.is_some() {
+        let _ = std::fs::remove_file(&metadata_path);
+    }
+    result?;
     Ok(encoded)
 }
 

@@ -21,6 +21,7 @@
 
 pub mod jingle;
 pub mod leveling;
+pub mod shownotes;
 
 /// The Anthropic API key, read from the environment. `None` (the common case in
 /// the default gate and for Free-tier users) means the AI path is unavailable
@@ -39,6 +40,12 @@ pub const ANTHROPIC_VERSION: &str = "2023-06-01";
 /// reasoning over a handful of numbers; kept here so all AI features share one
 /// knob.
 pub const LEVELING_MODEL: &str = "claude-haiku-4-5";
+
+/// The model we ask for show notes / chapters / clip suggestions. This reasons
+/// over a whole transcript (titles, bilingual summaries, chapter boundaries,
+/// quotable clips), which rewards a stronger model than leveling — we use the
+/// current Opus. Kept here so the AI features share their model knobs.
+pub const SHOWNOTES_MODEL: &str = "claude-opus-4-8";
 
 /// A minimal HTTP seam so the AI logic is testable without the network.
 ///

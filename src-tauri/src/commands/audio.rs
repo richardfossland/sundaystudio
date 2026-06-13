@@ -16,6 +16,7 @@ use ts_rs::TS;
 
 use crate::ai::jingle::{self, JingleResult, JingleSpec};
 use crate::ai::leveling::{self, LevelingResult, LevelingSnapshot, LevelingTrack};
+use crate::ai::shownotes::{self, ShowNotes, ShowNotesInput};
 use crate::ai::{self, ReqwestTransport};
 use crate::audio::playback::{self, PlaybackController, PlaybackTrack};
 use crate::audio::recorder::{
@@ -859,6 +860,46 @@ pub async fn ai_jingle_generate(spec: JingleSpec) -> AppResult<JingleResult> {
     })
     .await
     .map_err(|e| AppError::Internal(format!("jingle task failed: {e}")))?
+}
+
+/// AI show notes, chapters & clip suggestions (Phase 5.2, Pro).
+///
+/// Takes a transcript (from the SundayRec deep-link caption handoff, or pasted
+/// into the edit panel) and asks Claude (Anthropic Messages API) for title
+/// options, a Norwegian + English summary, timestamped chapters, tags, and a few
+/// suggested highlight clips. The model only suggests; the parser sanitizes every
+/// field against a strict schema (timestamps clamped into the take, chapters
+/// ordered, lists bounded) so a bad reply can never corrupt the project. Accepted
+/// chapters become ffmpeg chapter metadata on export.
+///
+/// The network call is opt-in and gated: it needs an `ANTHROPIC_API_KEY` (Free
+/// tier / unconfigured returns a clean validation error so the panel shows "legg
+/// til nøkkel for AI" and manual chapters keep working). The blocking HTTP call
+/// runs on `spawn_blocking` — AI is network I/O, never real-time, and never
+/// touches the audio thread.
+#[tauri::command]
+pub async fn ai_show_notes(input: ShowNotesInput) -> AppResult<ShowNotes> {
+    let api_key = ai::anthropic_api_key().ok_or_else(|| {
+        AppError::Validation(
+            "AI show notes need an Anthropic API key (set ANTHROPIC_API_KEY). It's a Sunday Cast Pro feature.".into(),
+        )
+    })?;
+
+    // Re-check server-side rather than trusting the renderer — an empty
+    // transcript surfaces as a validation error before we spend a request.
+    if input.transcript.trim().is_empty() {
+        return Err(AppError::Validation(
+            "no transcript to summarise — import captions or paste a transcript first".into(),
+        ));
+    }
+
+    // The Anthropic call is blocking network I/O; keep it off the async runtime.
+    tokio::task::spawn_blocking(move || {
+        shownotes::generate_show_notes(&ReqwestTransport, &api_key, &input)
+            .map_err(|e| AppError::Internal(format!("AI show notes failed: {e}")))
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("show-notes task failed: {e}")))?
 }
 
 #[cfg(test)]

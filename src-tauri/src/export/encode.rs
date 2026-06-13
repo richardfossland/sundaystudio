@@ -24,6 +24,78 @@ use std::process::Command;
 
 use super::format::ExportFormat;
 
+/// One chapter to embed in the exported file's metadata. `start_ms` is the
+/// chapter's start, `title` is what the podcast player shows. These come from the
+/// AI show-notes feature (or manual chapters) and are sanitized — ordered,
+/// non-overlapping, clamped into the take — before they ever reach here.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportChapter {
+    pub start_ms: f64,
+    pub title: String,
+}
+
+/// Build an ffmpeg FFMETADATA chapter file body for `chapters`, given the
+/// programme's total length in ms.
+///
+/// Pure and total: returns the exact `;FFMETADATA1`-headed text ffmpeg reads with
+/// `-i <file> -map_chapters`. Each `[CHAPTER]` block needs a `START` and an `END`
+/// (in a 1/1000 timebase = milliseconds); we set each chapter's END to the next
+/// chapter's START, and the last chapter's END to `total_ms`. Chapters are
+/// assumed pre-sorted and de-duplicated by the show-notes sanitizer; we still
+/// guard so a zero-length or out-of-order block can never be emitted:
+/// - chapters with a non-positive resulting span are dropped (ffmpeg rejects
+///   them), and
+/// - titles are escaped per the FFMETADATA spec (`=`, `;`, `#`, `\`, newline).
+///
+/// Returns `None` when there are no usable chapters, so the caller can skip the
+/// metadata-injection args entirely.
+pub fn build_ffmetadata(chapters: &[ExportChapter], total_ms: f64) -> Option<String> {
+    if chapters.is_empty() {
+        return None;
+    }
+    let mut out = String::from(";FFMETADATA1\n");
+    let mut emitted = 0usize;
+    for (i, ch) in chapters.iter().enumerate() {
+        let start = ch.start_ms.max(0.0).round() as i64;
+        // END = next chapter's start, or the programme end for the last one.
+        let next = chapters
+            .get(i + 1)
+            .map(|n| n.start_ms)
+            .unwrap_or(total_ms)
+            .max(0.0)
+            .round() as i64;
+        if next <= start {
+            continue; // zero-length / out-of-order — ffmpeg would reject it
+        }
+        out.push_str("[CHAPTER]\nTIMEBASE=1/1000\n");
+        out.push_str(&format!("START={start}\nEND={next}\n"));
+        out.push_str(&format!("title={}\n", escape_ffmetadata(&ch.title)));
+        emitted += 1;
+    }
+    if emitted == 0 {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+/// Escape a value for an FFMETADATA `key=value` line: `=`, `;`, `#`, `\` and
+/// newlines must be backslash-escaped, otherwise ffmpeg mis-parses the entry.
+fn escape_ffmetadata(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '=' | ';' | '#' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '\n' => out.push_str("\\\n"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Sample rates we allow for export, in Hz. 48 kHz is the podcast/broadcast
 /// default; 44.1 kHz is the legacy CD/MP3 rate some hosts still prefer. Mirrors
 /// `ALLOWED_SAMPLE_RATES` in `exportPlan.ts`.
@@ -154,9 +226,11 @@ pub fn plan_encode(
 /// the plan's format at `output`. Deterministic and order-stable so tests can
 /// assert the exact vector. Mirrors `buildFfmpegArgs` in `exportPlan.ts`.
 ///
-/// Shape: `-y -i <in> -c:a <codec> [-b:a <k>k] [-compression_level 8] -ar <rate>
-/// -ac <ch> <out>`.
+/// Shape: `-y -i <in> [-i <metadata> -map_metadata 1 -map_chapters 1] -c:a
+/// <codec> [-b:a <k>k] [-compression_level 8] -ar <rate> -ac <ch> <out>`.
 ///   - `-y` overwrites without prompting (the renderer manages temp paths).
+///   - When `metadata` is `Some`, a second input is the FFMETADATA chapter file
+///     and `-map_chapters 1` pulls its chapters into the output.
 ///   - `-b:a` is emitted only for lossy formats.
 ///   - FLAC adds `-compression_level 8` (best ratio; encode time is irrelevant
 ///     for an offline bounce).
@@ -164,6 +238,18 @@ pub fn plan_encode(
 /// Returns `None` for a WAV plan: WAV is written natively and never goes through
 /// the sidecar, so asking for its args is a no-op rather than an error.
 pub fn build_ffmpeg_args(plan: &EncodePlan, input: &Path, output: &Path) -> Option<Vec<String>> {
+    build_ffmpeg_args_with_metadata(plan, input, output, None)
+}
+
+/// Like [`build_ffmpeg_args`], but optionally embeds chapter metadata from an
+/// FFMETADATA file at `metadata`. Embedding is supported on the container formats
+/// that carry chapters (MP3/AAC/FLAC); a WAV plan still returns `None`.
+pub fn build_ffmpeg_args_with_metadata(
+    plan: &EncodePlan,
+    input: &Path,
+    output: &Path,
+    metadata: Option<&Path>,
+) -> Option<Vec<String>> {
     if plan.format == ExportFormat::Wav {
         return None;
     }
@@ -171,9 +257,18 @@ pub fn build_ffmpeg_args(plan: &EncodePlan, input: &Path, output: &Path) -> Opti
         "-y".to_string(),
         "-i".to_string(),
         input.display().to_string(),
-        "-c:a".to_string(),
-        plan.codec.to_string(),
     ];
+    // A second input + map_chapters pulls chapters from the FFMETADATA file.
+    if let Some(meta) = metadata {
+        args.push("-i".to_string());
+        args.push(meta.display().to_string());
+        args.push("-map_metadata".to_string());
+        args.push("1".to_string());
+        args.push("-map_chapters".to_string());
+        args.push("1".to_string());
+    }
+    args.push("-c:a".to_string());
+    args.push(plan.codec.to_string());
     if let Some(b) = plan.bitrate_kbps {
         args.push("-b:a".to_string());
         args.push(format!("{b}k"));
@@ -227,7 +322,20 @@ pub fn encode_with_ffmpeg(
     input: &Path,
     output: &Path,
 ) -> Result<bool, EncodeError> {
-    let Some(args) = build_ffmpeg_args(plan, input, output) else {
+    encode_with_ffmpeg_chapters(ffmpeg_bin, plan, input, output, None)
+}
+
+/// Like [`encode_with_ffmpeg`], but optionally embeds chapters from an
+/// FFMETADATA file at `metadata`. Used by the export step when AI/manual show
+/// notes contributed chapters. A WAV plan is still a no-op (`Ok(false)`).
+pub fn encode_with_ffmpeg_chapters(
+    ffmpeg_bin: &str,
+    plan: &EncodePlan,
+    input: &Path,
+    output: &Path,
+    metadata: Option<&Path>,
+) -> Result<bool, EncodeError> {
+    let Some(args) = build_ffmpeg_args_with_metadata(plan, input, output, metadata) else {
         return Ok(false); // WAV — nothing to encode
     };
     let output_result = Command::new(ffmpeg_bin)
@@ -415,6 +523,86 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, EncodeError::FfmpegUnavailable(_)));
+    }
+
+    fn chap(start_ms: f64, title: &str) -> ExportChapter {
+        ExportChapter {
+            start_ms,
+            title: title.to_string(),
+        }
+    }
+
+    #[test]
+    fn ffmetadata_emits_one_block_per_chapter_with_ms_timebase() {
+        let chapters = vec![
+            chap(0.0, "Welcome"),
+            chap(120_000.0, "Interview"),
+            chap(540_000.0, "Closing prayer"),
+        ];
+        let meta = build_ffmetadata(&chapters, 600_000.0).unwrap();
+        assert!(meta.starts_with(";FFMETADATA1\n"));
+        assert_eq!(meta.matches("[CHAPTER]").count(), 3);
+        assert!(meta.contains("TIMEBASE=1/1000"));
+        // First chapter spans 0 → next start; last ends at the programme end.
+        assert!(meta.contains("START=0\nEND=120000\ntitle=Welcome"));
+        assert!(meta.contains("START=540000\nEND=600000\ntitle=Closing prayer"));
+    }
+
+    #[test]
+    fn ffmetadata_escapes_special_characters_in_titles() {
+        let meta = build_ffmetadata(&[chap(0.0, "Q&A; part=1 #2"), chap(10_000.0, "End")], 20_000.0)
+            .unwrap();
+        // '=', ';' and '#' are backslash-escaped per the FFMETADATA spec.
+        assert!(meta.contains(r"title=Q&A\; part\=1 \#2"));
+    }
+
+    #[test]
+    fn ffmetadata_drops_zero_length_or_inverted_blocks() {
+        // A chapter whose start equals the next start would be zero-length: drop.
+        let chapters = vec![chap(0.0, "A"), chap(0.0, "B"), chap(5_000.0, "C")];
+        let meta = build_ffmetadata(&chapters, 10_000.0).unwrap();
+        // A (0→0) is dropped; B (0→5000) and C (5000→10000) survive.
+        assert_eq!(meta.matches("[CHAPTER]").count(), 2);
+        assert!(meta.contains("title=B"));
+        assert!(meta.contains("title=C"));
+    }
+
+    #[test]
+    fn ffmetadata_is_none_for_no_chapters() {
+        assert!(build_ffmetadata(&[], 60_000.0).is_none());
+        // A single chapter with no room before the end is also unusable.
+        assert!(build_ffmetadata(&[chap(60_000.0, "X")], 60_000.0).is_none());
+    }
+
+    #[test]
+    fn args_inject_chapter_metadata_when_present() {
+        let plan = plan_encode(ExportFormat::Mp3, Some(192), 2, 48_000).unwrap();
+        let args = build_ffmpeg_args_with_metadata(
+            &plan,
+            &p("/tmp/master.wav"),
+            &p("/tmp/out.mp3"),
+            Some(&p("/tmp/chapters.txt")),
+        )
+        .unwrap();
+        // The metadata file is a second input, mapped via -map_chapters 1.
+        assert_eq!(args.iter().filter(|a| *a == "-i").count(), 2);
+        let i = args.iter().position(|a| a == "/tmp/chapters.txt").unwrap();
+        assert_eq!(args[i - 1], "-i");
+        assert!(args.windows(2).any(|w| w == ["-map_chapters", "1"]));
+        assert!(args.windows(2).any(|w| w == ["-map_metadata", "1"]));
+        // The codec/bitrate/output still follow.
+        assert_eq!(args.last().unwrap(), "/tmp/out.mp3");
+    }
+
+    #[test]
+    fn args_without_metadata_match_the_plain_builder() {
+        let plan = plan_encode(ExportFormat::Mp3, Some(192), 2, 48_000).unwrap();
+        let plain = build_ffmpeg_args(&plan, &p("in.wav"), &p("out.mp3")).unwrap();
+        let none =
+            build_ffmpeg_args_with_metadata(&plan, &p("in.wav"), &p("out.mp3"), None).unwrap();
+        assert_eq!(plain, none);
+        // No chapter plumbing leaks in when there are no chapters.
+        assert!(!none.contains(&"-map_chapters".to_string()));
     }
 
     #[test]

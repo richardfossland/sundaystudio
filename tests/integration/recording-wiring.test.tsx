@@ -236,7 +236,35 @@ describe("RecordingPage transport wiring", () => {
     fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
 
     await waitFor(() =>
-      expect(exportRenderMock).toHaveBeenCalledWith("spotify"),
+      // No editor-curated chapters in this flow, so chapters ride along as
+      // `undefined` (the master-preset arg is also left to the backend default).
+      expect(exportRenderMock).toHaveBeenCalledWith(
+        "spotify",
+        undefined,
+        undefined,
+      ),
+    );
+  });
+
+  it("embeds the editor's show-notes chapters on export when present", async () => {
+    // The show-notes panel lifts curated chapters into the session; the export
+    // call must carry them so ffmpeg can write chapter metadata on the file.
+    useSession.getState().setChapters([
+      { start_ms: 0, title: "Welcome" },
+      { start_ms: 120000, title: "Interview" },
+    ]);
+    renderPage();
+    const picker = (await screen.findByLabelText(
+      "Export format",
+    )) as HTMLSelectElement;
+    fireEvent.change(picker, { target: { value: "spotify" } });
+    fireEvent.click(screen.getByRole("button", { name: /^export$/i }));
+
+    await waitFor(() =>
+      expect(exportRenderMock).toHaveBeenCalledWith("spotify", undefined, [
+        { start_ms: 0, title: "Welcome" },
+        { start_ms: 120000, title: "Interview" },
+      ]),
     );
   });
 

@@ -46,6 +46,11 @@ export type { LevelingSnapshot } from "./LevelingSnapshot";
 export type { LevelingSuggestion } from "./LevelingSuggestion";
 export type { LevelingResult } from "./LevelingResult";
 export type { JingleResult } from "./JingleResult";
+export type { ShowNotesInput } from "./ShowNotesInput";
+export type { ShowNotesChapter } from "./ShowNotesChapter";
+export type { ShowNotesClip } from "./ShowNotesClip";
+export type { ShowNotes } from "./ShowNotes";
+export type { ExportChapterInput } from "./ExportChapterInput";
 
 /** Error shape returned by every Tauri command (see error.rs).
  *  Keep this union in sync with `AppError::code()` in Rust. */

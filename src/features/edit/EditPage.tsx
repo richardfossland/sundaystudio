@@ -14,6 +14,7 @@ import {
   Magnet,
   Mic,
   Minus,
+  NotebookPen,
   Plus,
   Redo2,
   Scissors,
@@ -22,6 +23,7 @@ import {
   Trash2,
   Undo2,
   Volume2,
+  X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -44,6 +46,7 @@ import {
   type EditCommand,
   type PrimOp,
 } from "@/lib/editing";
+import { useI18n } from "@/lib/i18n";
 import { errorMessage, ipc } from "@/lib/ipc";
 import { PersistQueue } from "@/lib/persistQueue";
 import { useSession } from "@/lib/session";
@@ -51,6 +54,7 @@ import { formatTimecode } from "@/lib/timeline";
 import type { Region, Track } from "@/lib/bindings";
 
 import { useEditor } from "./editorStore";
+import { ShowNotesPanel } from "./ShowNotesPanel";
 import { LANE_H, RULER_H, Timeline } from "./Timeline";
 
 /** Per-region gain bounds and step (dB). */
@@ -81,8 +85,12 @@ export function EditPage({
   onBack?: () => void;
   onOpenRecord?: () => void;
 }) {
+  const t = useI18n((s) => s.t);
   const snapshot = useSession((s) => s.snapshot);
   const setSnapshot = useSession((s) => s.setSnapshot);
+  const setChapters = useSession((s) => s.setChapters);
+  const handoffContext = useSession((s) => s.handoffContext);
+  const handoffGlossary = useSession((s) => s.handoffGlossary);
   const {
     pxPerSec,
     playheadMs,
@@ -104,6 +112,7 @@ export function EditPage({
   const [leveling, setLeveling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [showNotesOpen, setShowNotesOpen] = useState(false);
   // The copied clip lives in a ref (no re-render on copy); a flag drives the UI.
   const clipboardRef = useRef<Region | null>(null);
   const [hasClipboard, setHasClipboard] = useState(false);
@@ -518,6 +527,16 @@ export function EditPage({
         (selected.end_in_take_ms - selected.start_in_take_ms);
   const canMerge = !!selected && !!mergeableNext(regions, selected);
   const canCrossfade = !!selected && !!overlapWithPrev(regions, selected);
+  // Programme length = the furthest clip end on the timeline, so the show-notes
+  // panel can clamp every AI-suggested timestamp into the real take.
+  const timelineEndMs = regions.reduce(
+    (max, r) =>
+      Math.max(
+        max,
+        r.position_in_timeline_ms + (r.end_in_take_ms - r.start_in_take_ms),
+      ),
+    0,
+  );
 
   return (
     <div className="flex h-screen flex-col">
@@ -575,6 +594,16 @@ export function EditPage({
               <Sparkles size={15} />
             )}
             {leveling ? "Leveling…" : "Auto-level"}
+          </Button>
+          <Button
+            variant={showNotesOpen ? "accent" : "surface"}
+            size="sm"
+            onClick={() => setShowNotesOpen((v) => !v)}
+            aria-pressed={showNotesOpen}
+            title="AI show notes, chapters & clip suggestions (Sunday Cast Pro)"
+          >
+            <NotebookPen size={15} />
+            {t("showNotesTitle")}
           </Button>
           <div className="mx-1 h-5 w-px bg-[var(--color-border)]" />
           <Button
@@ -827,6 +856,41 @@ export function EditPage({
               Delete
             </Button>
           </div>
+        </div>
+      )}
+
+      {/* AI show-notes slide-over: titles, summaries, chapters, tags, clips.
+          Curated chapters lift into the session so export embeds them. The
+          panel degrades gracefully with no API key (manual chapters only). */}
+      {showNotesOpen && (
+        <div className="fixed inset-0 z-40 flex justify-end">
+          <button
+            type="button"
+            aria-label="Close show notes"
+            className="flex-1 bg-black/30"
+            onClick={() => setShowNotesOpen(false)}
+          />
+          <aside className="flex h-full w-[26rem] max-w-full flex-col overflow-y-auto border-l border-[var(--color-border)] bg-[var(--color-bg)] shadow-xl">
+            <div className="flex items-center justify-end border-b border-[var(--color-border)] px-3 py-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowNotesOpen(false)}
+                aria-label="Close"
+              >
+                <X size={16} />
+              </Button>
+            </div>
+            <ShowNotesPanel
+              durationMs={timelineEndMs}
+              initialContext={handoffContext ?? undefined}
+              initialGlossary={handoffGlossary}
+              fromHandoff={
+                !!handoffContext || (handoffGlossary?.length ?? 0) > 0
+              }
+              onChaptersChange={setChapters}
+            />
+          </aside>
         </div>
       )}
     </div>
