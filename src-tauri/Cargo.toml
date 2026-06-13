@@ -45,6 +45,14 @@ hound = "3.5"
 # Lock-free SPSC ring buffer — carries samples from the real-time audio
 # callback to the writer thread without locks or allocation (Phase 1.2).
 rtrb = "0.3"
+# Sample-rate conversion — pure-Rust, no C toolchain, so it compiles in the
+# default test gate. The capture path uses it when the input interface cannot
+# open at the project rate: the device is opened at a supported rate and every
+# block is resampled to the project rate before it reaches the writer, so
+# nothing is recorded at the wrong speed. The rate-selection + resampler-wiring
+# logic is unit-tested (see `audio::recorder::rate` / `::resampler`); the live
+# capture path itself stays hardware-unverified (see `stream.rs`).
+rubato = "0.15"
 
 # Loudness measurement (Phase 4.2) — EBU R128 / ITU-R BS.1770. A pure-Rust port
 # of libebur128 (no C toolchain), so it compiles in the default test gate. Gives
@@ -77,7 +85,6 @@ default = []
 # Later phases add the heavier audio/AI deps behind features so the default
 # build compiles fast, offline, and with no extra system toolchain. Planned:
 #   dsp   = ["dep:dasp", "dep:fundsp"]          # built-in effects (Phase 4)
-#   resample = ["dep:rubato"]                   # sample-rate conversion (Phase 1)
 #   rt    = ["dep:rtrb"]                         # lock-free ring buffer (Phase 1.2)
 #   decode = ["dep:symphonia"]                  # MP3/FLAC/AAC/OGG decode (Phase 3)
 #   db    = ["dep:sqlx", "dep:uuid"]            # project storage (Phase 2.1)
