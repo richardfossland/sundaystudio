@@ -4,7 +4,7 @@
  * A validated request to import a recording into a project, parsed from a
  * `sundaystudio://import?…` deep link. The renderer turns this into a real
  * take/project via the normal import flow. Carries the full canonical
- * `MediaHandoff` field set (sunday-contracts v0.4.0).
+ * `MediaHandoff` field set (sunday-contracts v0.4.x).
  */
 export type ImportRequest = { 
 /**

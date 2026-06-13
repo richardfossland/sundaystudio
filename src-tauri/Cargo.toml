@@ -25,6 +25,11 @@ tauri = { version = "2", features = [] }
 # would break the single-repo checkout. For local sunday-auth co-dev, override
 # with a `[patch]` in .cargo/config.toml.
 sunday-auth = { git = "https://github.com/richardfossland/sunday-platform.git", tag = "v0.3.0" }
+# Canonical cross-app wire contracts (Rust mirror of @sunday/contracts). Its
+# `MediaHandoff` parser is the single source of truth for the Rec → Studio
+# deep-link grammar, so all eight fields stay in lockstep across the suite. Same
+# git-tag distribution as sunday-auth (no path dep → CI builds standalone).
+sunday-contracts = { git = "https://github.com/richardfossland/sunday-platform.git", tag = "v0.4.1" }
 # Native file dialogs for New/Open project (Phase 2.3).
 tauri-plugin-dialog = "2"
 # Inbound `sundaystudio://import` deep links — the Rec → Studio handoff. The

@@ -8,10 +8,26 @@
 //! lifecycle, emitting the parsed request to the renderer — lives in `lib.rs`;
 //! the renderer drives the actual import via the existing project/take flows.
 //!
-//! Contract: FIELD-IDENTICAL parse of the canonical `MediaHandoff` deep link
-//! (sunday-platform `sunday-contracts` v0.4.0, `packages/contracts/src/deeplink.ts`
-//! / `crates/sunday-contracts/src/deeplink.rs`) — the same grammar SundayEdit
-//! and SundayRec speak; we own the `sundaystudio://` scheme:
+//! ## Single source of truth
+//!
+//! The grammar is owned by the canonical `sunday-contracts` crate
+//! (`MediaHandoff` / [`parse_handoff_url`], git-tag `v0.4.1`) — the exact same
+//! parser SundayEdit and SundayRec speak. We do NOT re-implement it: we call it
+//! with our own scheme (`sundaystudio`) and then map the canonical
+//! [`MediaHandoff`] onto our [`ImportRequest`]. That keeps all eight fields
+//! (path · media_kind · language · context · glossary · service_id · church_id ·
+//! return_to) in lockstep with the rest of the suite — a `round_trip_parity`
+//! test fails loudly if either side ever drifts.
+//!
+//! `ImportRequest` stays a SundayStudio-local type rather than re-exporting
+//! `MediaHandoff` directly, for two reasons the canonical type deliberately
+//! does not cover:
+//!   1. **TS bindings** — it derives `ts_rs::TS` to generate the frontend
+//!      `ImportRequest.ts` the renderer's typed `invoke` wrapper consumes.
+//!   2. **Security** — the deep-link `path` is untrusted (any app or pasted URL
+//!      can launch us) and gets copied off disk by the import flow, so we reject
+//!      relative paths and `..` traversal here. The wire contract intentionally
+//!      stays transport-only and does no filesystem policy.
 //!
 //! ```text
 //! sundaystudio://import
@@ -27,11 +43,11 @@
 //!
 //! Everything is percent-decoded (`+` is also treated as a space, per the
 //! `application/x-www-form-urlencoded` convention). Unknown query keys are
-//! ignored so the contract can grow without breaking older builds — the same
-//! forward-compatibility SundayEdit relies on. Do not add or rename fields
-//! without changing the canonical contract first.
+//! ignored so the contract can grow without breaking older builds. Do not add or
+//! rename fields here — change the canonical `sunday-contracts` contract first.
 
 use serde::{Deserialize, Serialize};
+use sunday_contracts::{parse_handoff_url, MediaHandoff, MediaKind};
 use ts_rs::TS;
 
 use crate::error::{AppError, AppResult};
@@ -44,7 +60,7 @@ pub const ACTION_IMPORT: &str = "import";
 /// A validated request to import a recording into a project, parsed from a
 /// `sundaystudio://import?…` deep link. The renderer turns this into a real
 /// take/project via the normal import flow. Carries the full canonical
-/// `MediaHandoff` field set (sunday-contracts v0.4.0).
+/// `MediaHandoff` field set (sunday-contracts v0.4.x).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export, export_to = "../../src/lib/bindings/ImportRequest.ts")]
 pub struct ImportRequest {
@@ -68,107 +84,55 @@ pub struct ImportRequest {
     pub return_to: Option<String>,
 }
 
-/// Parse a `sundaystudio://import?…` URL into an [`ImportRequest`].
-///
-/// Returns [`AppError::Validation`] for anything that isn't a well-formed
-/// import link with a non-empty `path`.
-pub fn parse_import_url(url: &str) -> AppResult<ImportRequest> {
-    let trimmed = url.trim();
-
-    // Strip the scheme (case-insensitive), tolerating `://` or a bare `:`.
-    let rest = strip_scheme(trimmed, SCHEME)
-        .ok_or_else(|| AppError::Validation(format!("not a {SCHEME}:// link: {url}")))?;
-
-    // Split `action[?query]`. The action is everything up to the first `?`;
-    // a trailing slash (`import/?…`) is tolerated.
-    let (action_part, query) = match rest.split_once('?') {
-        Some((a, q)) => (a, q),
-        None => (rest, ""),
-    };
-    let action = action_part.trim_end_matches('/').trim_start_matches('/');
-    if !action.eq_ignore_ascii_case(ACTION_IMPORT) {
-        return Err(AppError::Validation(format!(
-            "unsupported deep-link action: {action:?} (expected {ACTION_IMPORT:?})"
-        )));
+/// Render a canonical [`MediaKind`] as the lowercase string the renderer and TS
+/// bindings expect (`"video"` / `"audio"`).
+fn media_kind_str(kind: MediaKind) -> String {
+    match kind {
+        MediaKind::Video => "video",
+        MediaKind::Audio => "audio",
     }
+    .to_string()
+}
 
-    let mut path: Option<String> = None;
-    let mut media_kind: Option<String> = None;
-    let mut language: Option<String> = None;
-    let mut context: Option<String> = None;
-    let mut glossary: Vec<String> = Vec::new();
-    let mut service_id: Option<String> = None;
-    let mut church_id: Option<String> = None;
-    let mut return_to: Option<String> = None;
-
-    for pair in query.split('&').filter(|s| !s.is_empty()) {
-        let (raw_key, raw_val) = pair.split_once('=').unwrap_or((pair, ""));
-        let key = decode_component(raw_key);
-        let value = decode_component(raw_val);
-        match key.as_str() {
-            "path" => path = non_empty(value),
-            "media_kind" | "kind" => media_kind = parse_media_kind(&value),
-            "language" | "lang" => language = non_empty(value),
-            "context" => context = non_empty(value),
-            "glossary" => glossary = split_glossary(&value),
-            "service_id" => service_id = non_empty(value),
-            "church_id" => church_id = non_empty(value),
-            "returnTo" | "return_to" => return_to = non_empty(value),
-            _ => {} // forward-compatible: ignore unknown keys
+impl From<MediaHandoff> for ImportRequest {
+    /// Project the canonical handoff onto our local type. The canonical `action`
+    /// field is dropped (always `"import"`; our scheme + parser already pin it),
+    /// and `media_kind` is flattened to its wire string for the TS bindings.
+    fn from(h: MediaHandoff) -> Self {
+        ImportRequest {
+            path: h.path,
+            media_kind: h.media_kind.map(media_kind_str),
+            language: h.language,
+            context: h.context,
+            glossary: h.glossary,
+            service_id: h.service_id,
+            church_id: h.church_id,
+            return_to: h.return_to,
         }
     }
+}
 
-    let path = path.ok_or_else(|| {
-        AppError::Validation("deep-link import is missing a non-empty `path`".into())
-    })?;
+/// Parse a `sundaystudio://import?…` URL into an [`ImportRequest`].
+///
+/// Delegates the grammar to the canonical `sunday-contracts` parser, then
+/// applies SundayStudio's own untrusted-path security policy on top. Returns
+/// [`AppError::Validation`] for anything that isn't a well-formed import link
+/// with a clean, absolute `path`.
+pub fn parse_import_url(url: &str) -> AppResult<ImportRequest> {
+    // The canonical parser owns the scheme/action/query grammar and the codec.
+    // It already rejects the wrong scheme, the wrong action, and a missing or
+    // empty `path` — we surface those as our own `Validation` errors.
+    let handoff =
+        parse_handoff_url(url, SCHEME).map_err(|e| AppError::Validation(e.to_string()))?;
 
     // SECURITY: the link is untrusted (any app or pasted URL can launch us), and
     // `path` is copied straight off disk by the import flow. Only accept a clean
     // absolute path so a crafted link can't traverse out (`../../etc/passwd`) or
-    // read a file relative to our working directory.
-    validate_import_path(&path)?;
+    // read a file relative to our working directory. The wire contract stays
+    // transport-only, so this policy lives here, not in `sunday-contracts`.
+    validate_import_path(&handoff.path)?;
 
-    Ok(ImportRequest {
-        path,
-        media_kind,
-        language,
-        context,
-        glossary,
-        service_id,
-        church_id,
-        return_to,
-    })
-}
-
-/// Only the canonical `MediaKind` values pass; anything else degrades to
-/// `None` rather than failing the import (matches the canonical parser).
-fn parse_media_kind(value: &str) -> Option<String> {
-    let v = value.trim().to_ascii_lowercase();
-    if v == "video" || v == "audio" {
-        Some(v)
-    } else {
-        None
-    }
-}
-
-/// Comma-separated → trimmed, non-empty, case-insensitively de-duplicated,
-/// order preserved (matches the canonical `splitGlossary` / SundayEdit).
-fn split_glossary(value: &str) -> Vec<String> {
-    let mut seen: Vec<String> = Vec::new();
-    let mut out: Vec<String> = Vec::new();
-    for term in value.split(',') {
-        let t = term.trim();
-        if t.is_empty() {
-            continue;
-        }
-        let lower = t.to_lowercase();
-        if seen.contains(&lower) {
-            continue;
-        }
-        seen.push(lower);
-        out.push(t.to_string());
-    }
-    out
+    Ok(ImportRequest::from(handoff))
 }
 
 /// Reject any import path that isn't a clean absolute path: a relative path, or
@@ -208,104 +172,10 @@ fn is_absolute_path(path: &str) -> bool {
         && (bytes[2] == b'\\' || bytes[2] == b'/')
 }
 
-/// If `s` begins with `scheme:` (case-insensitive), return the remainder with
-/// any leading `//` removed. Otherwise `None`.
-fn strip_scheme<'a>(s: &'a str, scheme: &str) -> Option<&'a str> {
-    let prefix_len = scheme.len() + 1; // "+ 1" for the ':'
-    if s.len() < prefix_len {
-        return None;
-    }
-    let (head, tail) = s.split_at(prefix_len);
-    let (name, colon) = head.split_at(scheme.len());
-    if colon != ":" || !name.eq_ignore_ascii_case(scheme) {
-        return None;
-    }
-    Some(tail.strip_prefix("//").unwrap_or(tail))
-}
-
-/// `Some(trimmed)` if non-empty after trimming, else `None`.
-fn non_empty(s: String) -> Option<String> {
-    let t = s.trim();
-    if t.is_empty() {
-        None
-    } else {
-        Some(t.to_string())
-    }
-}
-
-/// Percent-encode a string as a URL query-component value: RFC 3986 unreserved
-/// characters (`A-Z a-z 0-9 - _ . ~`) pass through, everything else (including
-/// `/`, spaces and non-ASCII) becomes `%XX`. The exact inverse of
-/// [`decode_component`] for any input (spaces round-trip via `%20`, never `+`).
-pub fn encode_component(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for &b in s.as_bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            _ => {
-                out.push('%');
-                out.push(hex_digit(b >> 4));
-                out.push(hex_digit(b & 0x0f));
-            }
-        }
-    }
-    out
-}
-
-fn hex_digit(n: u8) -> char {
-    match n {
-        0..=9 => (b'0' + n) as char,
-        _ => (b'A' + (n - 10)) as char,
-    }
-}
-
-/// Percent-decode one query component. `%XX` → byte, `+` → space, everything
-/// else verbatim. Invalid `%` escapes are left as-is rather than rejected, so a
-/// stray `%` in a path never sinks the whole import. Bytes are reassembled and
-/// read as UTF-8 (lossily) at the end.
-fn decode_component(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'+' => {
-                out.push(b' ');
-                i += 1;
-            }
-            b'%' if i + 2 < bytes.len() => match (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                (Some(hi), Some(lo)) => {
-                    out.push(hi << 4 | lo);
-                    i += 3;
-                }
-                _ => {
-                    out.push(b'%');
-                    i += 1;
-                }
-            },
-            b => {
-                out.push(b);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn hex_val(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sunday_contracts::build_handoff_url;
 
     #[test]
     fn parses_a_full_link() {
@@ -325,7 +195,7 @@ mod tests {
 
     #[test]
     fn parses_the_full_canonical_media_handoff_field_set() {
-        // The complete canonical MediaHandoff grammar (sunday-contracts v0.4.0).
+        // The complete canonical MediaHandoff grammar (sunday-contracts v0.4.x).
         let url = "sundaystudio://import?path=%2FUsers%2Fola%2Fsermon.mp4\
                    &media_kind=video&language=no\
                    &context=Preken%2C%20taler%3A%20Ola%20Nordmann\
@@ -341,6 +211,41 @@ mod tests {
         assert_eq!(req.service_id.as_deref(), Some("svc-123"));
         assert_eq!(req.church_id.as_deref(), Some("ch-456"));
         assert_eq!(req.return_to.as_deref(), Some("sundayrec"));
+    }
+
+    /// The drift guard: every canonical field must survive the canonical
+    /// build → our parse → our `ImportRequest` round trip. If `sunday-contracts`
+    /// grows or renames a field and our conversion doesn't carry it, this fails.
+    #[test]
+    fn round_trip_parity_carries_all_eight_fields() {
+        let canonical = MediaHandoff {
+            action: ACTION_IMPORT.to_string(),
+            path: "/Users/ola/My Talk (2026).mov".to_string(),
+            media_kind: Some(MediaKind::Video),
+            language: Some("no".to_string()),
+            context: Some("Sermon, speaker: Ola".to_string()),
+            glossary: vec!["Ola".to_string(), "kerygma".to_string()],
+            service_id: Some("svc-1".to_string()),
+            church_id: Some("ch-1".to_string()),
+            return_to: Some("sundayrec".to_string()),
+        };
+        // Build the wire URL with the canonical encoder, parse it back with our
+        // receiver, and assert each field landed.
+        let url = build_handoff_url(SCHEME, &canonical);
+        let req = parse_import_url(&url).unwrap();
+
+        assert_eq!(req.path, canonical.path);
+        assert_eq!(req.media_kind.as_deref(), Some("video"));
+        assert_eq!(req.language, canonical.language);
+        assert_eq!(req.context, canonical.context);
+        assert_eq!(req.glossary, canonical.glossary);
+        assert_eq!(req.service_id, canonical.service_id);
+        assert_eq!(req.church_id, canonical.church_id);
+        assert_eq!(req.return_to, canonical.return_to);
+
+        // And the direct `From` projection must agree with the parsed result, so
+        // the conversion is the single mapping (no second code path can drift).
+        assert_eq!(ImportRequest::from(canonical), req);
     }
 
     #[test]
@@ -449,24 +354,6 @@ mod tests {
         // A stray '%' (not a valid escape) must not lose the rest of the path.
         let req = parse_import_url("sundaystudio://import?path=/a%b/c.wav").unwrap();
         assert_eq!(req.path, "/a%b/c.wav");
-    }
-
-    #[test]
-    fn encode_decode_round_trips() {
-        for s in [
-            "/Users/ola/My Sermon (2026).wav",
-            "C:\\Users\\Ola\\take.flac",
-            "jingle + søndag/æøå",
-            "",
-        ] {
-            assert_eq!(
-                decode_component(&encode_component(s)),
-                s,
-                "round-trip {s:?}"
-            );
-        }
-        // Spaces encode as %20 (not +), so they survive the +→space decode rule.
-        assert_eq!(encode_component("a b"), "a%20b");
     }
 
     #[test]
