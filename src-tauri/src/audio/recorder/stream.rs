@@ -8,6 +8,13 @@
 //! 8-track 60-min capture, device unplug mid-recording, sample-rate mismatch,
 //! and crash recovery, across the Focusrite/Behringer/RØDE/MOTU/built-in matrix.
 //!
+//! The sample-rate-mismatch case is now *handled* (not just flagged): the
+//! device is opened at a supported rate and resampled to the project rate —
+//! see `build_capture_stream` below. The rate-selection logic (`rate.rs`) and
+//! the streaming resampler (`resampler.rs`) are unit-tested, but the live
+//! capture → resample → disk path on a non-project-rate interface (e.g. a
+//! 44.1 kHz-locked device in a 48 kHz project) still needs rig verification.
+//!
 //! These functions are `pub` so they are part of the crate's API (the recording
 //! UI / hardware integration in Phase 2.2 calls them) and don't read as dead
 //! code. The data callback does only real-time-safe work: hand the interleaved
@@ -22,8 +29,15 @@ use std::time::Duration;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SampleFormat;
 
+use super::rate::{select_capture_rate, RateRange};
+use super::resampler::BlockResampler;
 use super::session::CaptureSink;
 use crate::error::{AppError, AppResult};
+
+/// Fixed resampler input chunk size (frames) when the device rate differs from
+/// the project rate. Sized near a typical callback block so resample latency
+/// stays low; the [`BlockResampler`] accumulates across callbacks regardless.
+const RESAMPLE_CHUNK_FRAMES: usize = 1024;
 
 /// Resolve an input device by name, or the host default when `name` is None.
 /// Returns a clear error if the named device is gone (e.g. unplugged).
@@ -45,11 +59,23 @@ pub fn find_input_device(name: Option<&str>) -> AppResult<cpal::Device> {
 /// the returned `Stream` on a dedicated thread and calls `.play()` — cpal's
 /// `Stream` is `!Send` on some platforms, so it must never cross threads.
 ///
+/// `project_rate` is the rate the recording is stored at (what `sink` and the
+/// WAV writer expect). The device may not be able to open at that rate, so we:
+///   1. enumerate the device's supported input configs and choose the rate it
+///      will actually be opened at (the project rate when supported, otherwise
+///      the nearest reachable rate, or the device default when nothing is
+///      advertised — see [`super::rate::select_capture_rate`]);
+///   2. open the device at that chosen rate;
+///   3. if the chosen device rate differs from `project_rate`, resample every
+///      captured block to `project_rate` (via [`BlockResampler`]) before it
+///      reaches `sink`, so what lands on disk is always at the project rate and
+///      never plays back at the wrong speed.
+///
 /// Handles the two common input formats (f32, i16). Other formats return an
 /// explicit error rather than silently mis-decoding.
 pub fn build_capture_stream(
     device: &cpal::Device,
-    sample_rate: u32,
+    project_rate: u32,
     channels: u16,
     mut sink: CaptureSink,
 ) -> AppResult<cpal::Stream> {
@@ -57,10 +83,43 @@ pub fn build_capture_stream(
         .default_input_config()
         .map_err(|e| AppError::Audio(format!("querying default input config: {e}")))?;
 
+    // Collect the device's supported input sample-rate ranges so we can decide
+    // whether it can run at the project rate, falling back to the default
+    // config's rate if the device advertises no usable ranges.
+    let ranges: Vec<RateRange> = device
+        .supported_input_configs()
+        .map(|cfgs| {
+            cfgs.map(|c| RateRange::new(c.min_sample_rate().0, c.max_sample_rate().0))
+                .collect()
+        })
+        .unwrap_or_default();
+    let device_rate = select_capture_rate(project_rate, &ranges, supported.sample_rate().0);
+
+    if device_rate != project_rate {
+        tracing::info!(
+            "input device cannot open at project rate {project_rate} Hz; \
+             opening at {device_rate} Hz and resampling to the project rate"
+        );
+    }
+
     let config = cpal::StreamConfig {
         channels,
-        sample_rate: cpal::SampleRate(sample_rate),
+        sample_rate: cpal::SampleRate(device_rate),
         buffer_size: cpal::BufferSize::Default,
+    };
+
+    // When the device runs at a different rate, build the streaming resampler
+    // once (here, not in the callback) so the real-time path only converts.
+    // `None` means the device rate matches the project rate — push directly.
+    let mut resampler: Option<BlockResampler> = if device_rate != project_rate {
+        Some(BlockResampler::new(
+            device_rate,
+            project_rate,
+            channels as usize,
+            RESAMPLE_CHUNK_FRAMES,
+        )?)
+    } else {
+        None
     };
 
     let err_fn = |e| tracing::error!("audio input stream error: {e}");
@@ -68,7 +127,14 @@ pub fn build_capture_stream(
     let stream = match supported.sample_format() {
         SampleFormat::F32 => device.build_input_stream(
             &config,
-            move |data: &[f32], _: &cpal::InputCallbackInfo| sink.push_interleaved(data),
+            move |data: &[f32], _: &cpal::InputCallbackInfo| match resampler.as_mut() {
+                None => sink.push_interleaved(data),
+                Some(r) => {
+                    if let Ok(out) = r.process_interleaved(data) {
+                        sink.push_interleaved(out);
+                    }
+                }
+            },
             err_fn,
             None,
         ),
@@ -84,7 +150,14 @@ pub fn build_capture_stream(
                     for &s in data {
                         scratch.push(s as f32 / i16::MAX as f32);
                     }
-                    sink.push_interleaved(&scratch);
+                    match resampler.as_mut() {
+                        None => sink.push_interleaved(&scratch),
+                        Some(r) => {
+                            if let Ok(out) = r.process_interleaved(&scratch) {
+                                sink.push_interleaved(out);
+                            }
+                        }
+                    }
                 },
                 err_fn,
                 None,

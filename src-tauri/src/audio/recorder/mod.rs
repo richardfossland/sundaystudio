@@ -24,6 +24,8 @@
 pub mod command;
 pub mod meters;
 pub mod monitor;
+pub mod rate;
+pub mod resampler;
 pub mod session;
 pub mod stream;
 pub mod writer;
