@@ -550,8 +550,11 @@ mod tests {
 
     #[test]
     fn ffmetadata_escapes_special_characters_in_titles() {
-        let meta = build_ffmetadata(&[chap(0.0, "Q&A; part=1 #2"), chap(10_000.0, "End")], 20_000.0)
-            .unwrap();
+        let meta = build_ffmetadata(
+            &[chap(0.0, "Q&A; part=1 #2"), chap(10_000.0, "End")],
+            20_000.0,
+        )
+        .unwrap();
         // '=', ';' and '#' are backslash-escaped per the FFMETADATA spec.
         assert!(meta.contains(r"title=Q&A\; part\=1 \#2"));
     }

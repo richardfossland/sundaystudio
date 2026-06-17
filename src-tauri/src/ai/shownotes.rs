@@ -341,7 +341,11 @@ fn sanitize_chapters(raw: Vec<RawChapter>, max_ms: Option<f64>) -> Vec<ShowNotes
         .collect();
 
     // Order by start time so chapters are monotonic for the player / ffmpeg.
-    chapters.sort_by(|a, b| a.start_ms.partial_cmp(&b.start_ms).unwrap_or(std::cmp::Ordering::Equal));
+    chapters.sort_by(|a, b| {
+        a.start_ms
+            .partial_cmp(&b.start_ms)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Drop chapters whose start duplicates the previous one (a player needs
     // strictly-increasing chapter starts; ffmpeg rejects zero-length chapters).
@@ -416,7 +420,9 @@ pub fn generate_show_notes(
     input: &ShowNotesInput,
 ) -> Result<ShowNotes, String> {
     if input.transcript.trim().is_empty() {
-        return Err("no transcript to summarise — import captions or paste a transcript".to_string());
+        return Err(
+            "no transcript to summarise — import captions or paste a transcript".to_string(),
+        );
     }
 
     let body = build_request_body(input).to_string();
@@ -538,7 +544,10 @@ mod tests {
         // Chapters ordered, all within the 10-minute take.
         assert_eq!(notes.chapters.len(), 3);
         assert_eq!(notes.chapters[0].start_ms, 0.0);
-        assert!(notes.chapters.windows(2).all(|w| w[0].start_ms < w[1].start_ms));
+        assert!(notes
+            .chapters
+            .windows(2)
+            .all(|w| w[0].start_ms < w[1].start_ms));
         assert_eq!(notes.tags, vec!["youth", "ministry", "faith"]);
         assert_eq!(notes.clips.len(), 2);
         assert!(notes.clips.iter().all(|c| c.end_ms > c.start_ms));
