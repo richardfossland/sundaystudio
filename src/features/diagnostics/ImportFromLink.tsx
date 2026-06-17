@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { ipc, errorMessage } from "@/lib/ipc";
 import { seedProjectFromImportLink } from "@/lib/deeplinkImport";
 import { useI18n } from "@/lib/i18n";
+import { useSession } from "@/lib/session";
 
 /**
  * "Import from Sunday link" affordance.
@@ -19,6 +20,7 @@ import { useI18n } from "@/lib/i18n";
  */
 export function ImportFromLink({ onImported }: { onImported?: () => void }) {
   const t = useI18n((s) => s.t);
+  const setHandoff = useSession((s) => s.setHandoff);
   const [url, setUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +33,10 @@ export function ImportFromLink({ onImported }: { onImported?: () => void }) {
     setError(null);
     setDoneName(null);
     try {
-      const meta = await seedProjectFromImportLink(ipc, trimmed);
+      const { meta, request } = await seedProjectFromImportLink(ipc, trimmed);
+      // Carry the handoff's context/glossary so the editor's show-notes panel
+      // can prime Claude (spell speaker names right, name chapters sensibly).
+      setHandoff(request.context ?? null, request.glossary ?? []);
       setDoneName(meta.name);
       setUrl("");
       onImported?.();

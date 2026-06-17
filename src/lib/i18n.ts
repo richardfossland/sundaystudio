@@ -223,6 +223,39 @@ const en: Catalog = {
   jinglePageDelete: "Delete",
   jinglePagePreviewUnavailable:
     "Preview plays once the generated audio downloads in the app.",
+
+  // ── AI show notes / chapters / clips ──────────────────────────────────────
+  showNotesTitle: "AI show notes",
+  showNotesDesc:
+    "Turn this episode's transcript into title ideas, summaries, chapters, tags and clip suggestions.",
+  showNotesTranscriptLabel: "Transcript",
+  showNotesTranscriptPlaceholder:
+    "Paste the transcript, or it arrives automatically from a SundayRec handoff…",
+  showNotesTranscriptFromHandoff: "Transcript received from SundayRec.",
+  showNotesGenerate: "Generate show notes",
+  showNotesGenerating: "Generating…",
+  showNotesNoKey: "Add a key for AI",
+  showNotesNoKeyHint:
+    "AI show notes need an Anthropic API key (Sunday Cast Pro). You can still add and edit chapters manually.",
+  showNotesNeedTranscript: "Paste or import a transcript first.",
+  showNotesError: "Could not generate show notes",
+  showNotesModelLabel: "Suggested by",
+  showNotesSectionTitles: "Title options",
+  showNotesSectionSummaryNo: "Summary (Norwegian)",
+  showNotesSectionSummaryEn: "Summary (English)",
+  showNotesSectionChapters: "Chapters",
+  showNotesSectionTags: "Tags",
+  showNotesSectionClips: "Clip suggestions",
+  showNotesCopy: "Copy",
+  showNotesCopied: "Copied",
+  showNotesUseChapters: "Use these chapters",
+  showNotesChaptersApplied: "Chapters ready — they'll be embedded on export.",
+  showNotesAddChapter: "Add chapter",
+  showNotesChapterTitlePlaceholder: "Chapter title…",
+  showNotesNoChapters:
+    "No chapters yet. Generate them with AI or add them by hand.",
+  showNotesManualHint: "Manual chapters work without an AI key.",
+  showNotesClipReason: "Why",
 };
 
 // ── Norwegian ──────────────────────────────────────────────────────────────
@@ -430,6 +463,39 @@ const no: Catalog = {
   jinglePageDelete: "Slett",
   jinglePagePreviewUnavailable:
     "Forhåndsvisning spilles av når den genererte lyden lastes ned i appen.",
+
+  // ── AI-programnotater / kapitler / klipp ──────────────────────────────────
+  showNotesTitle: "AI-programnotater",
+  showNotesDesc:
+    "Gjør episodens transkripsjon om til tittelforslag, sammendrag, kapitler, emneord og klippforslag.",
+  showNotesTranscriptLabel: "Transkripsjon",
+  showNotesTranscriptPlaceholder:
+    "Lim inn transkripsjonen, eller den kommer automatisk fra en SundayRec-overlevering…",
+  showNotesTranscriptFromHandoff: "Transkripsjon mottatt fra SundayRec.",
+  showNotesGenerate: "Lag programnotater",
+  showNotesGenerating: "Lager…",
+  showNotesNoKey: "Legg til nøkkel for AI",
+  showNotesNoKeyHint:
+    "AI-programnotater krever en Anthropic API-nøkkel (Sunday Cast Pro). Du kan fortsatt legge til og redigere kapitler manuelt.",
+  showNotesNeedTranscript: "Lim inn eller importer en transkripsjon først.",
+  showNotesError: "Kunne ikke lage programnotater",
+  showNotesModelLabel: "Foreslått av",
+  showNotesSectionTitles: "Tittelforslag",
+  showNotesSectionSummaryNo: "Sammendrag (norsk)",
+  showNotesSectionSummaryEn: "Sammendrag (engelsk)",
+  showNotesSectionChapters: "Kapitler",
+  showNotesSectionTags: "Emneord",
+  showNotesSectionClips: "Klippforslag",
+  showNotesCopy: "Kopier",
+  showNotesCopied: "Kopiert",
+  showNotesUseChapters: "Bruk disse kapitlene",
+  showNotesChaptersApplied: "Kapitler klare — de bakes inn ved eksport.",
+  showNotesAddChapter: "Legg til kapittel",
+  showNotesChapterTitlePlaceholder: "Kapitteltittel…",
+  showNotesNoChapters:
+    "Ingen kapitler ennå. Lag dem med AI eller legg dem til manuelt.",
+  showNotesManualHint: "Manuelle kapitler virker uten AI-nøkkel.",
+  showNotesClipReason: "Hvorfor",
 };
 
 // ── Swedish (partial — falls back to English) ─────────────────────────────

@@ -19,6 +19,7 @@ import type {
   AppInfo,
   AudioDeviceList,
   AudioSettings,
+  ExportChapterInput,
   ExportPresetInfo,
   ExportResult,
   ImportRequest,
@@ -37,6 +38,8 @@ import type {
   RecentProject,
   RecordingStatus,
   Region,
+  ShowNotes,
+  ShowNotesInput,
   SilenceSpan,
   TemplateInfo,
   TimelineSnapshot,
@@ -323,9 +326,16 @@ export const deeplink = {
 export const exporter = {
   /** Platform-ready export presets (format + bitrate + channels + LUFS target). */
   presets: () => call<ExportPresetInfo[]>("export_presets"),
-  /** Bounce the open project's latest take to a mastered, normalised WAV. */
-  render: (presetId: string, masterPresetId?: string) =>
-    call<ExportResult>("export_render", { presetId, masterPresetId }),
+  /** Bounce the open project's latest take to a mastered, normalised WAV.
+   *  Optional `chapters` (accepted AI/manual show-notes chapters) are embedded
+   *  as ffmpeg chapter metadata in the encoded MP3/AAC/FLAC; they're ignored for
+   *  a plain WAV bounce and when the ffmpeg sidecar is unavailable. */
+  render: (
+    presetId: string,
+    masterPresetId?: string,
+    chapters?: ExportChapterInput[],
+  ) =>
+    call<ExportResult>("export_render", { presetId, masterPresetId, chapters }),
 };
 
 // ── AI ───────────────────────────────────────────────────────────────────────
@@ -344,6 +354,17 @@ export const ai = {
    *  thread. Returns the generated audio's URL + metadata to download & mix. */
   generateJingle: (spec: JingleSpec) =>
     call<JingleResult>("ai_jingle_generate", { spec }),
+
+  /** Generate show notes from a transcript (Phase 5.2, Sunday Cast Pro): title
+   *  options, a Norwegian + English summary, timestamped chapters, tags, and a
+   *  few suggested highlight clips. The transcript comes from the SundayRec
+   *  deep-link caption handoff or a paste. Needs `ANTHROPIC_API_KEY` on the
+   *  backend; throws a `validation` IPCError when unavailable, so the UI shows
+   *  "legg til nøkkel for AI" and manual chapters keep working. The model only
+   *  suggests — every field is sanitized backend-side. Network I/O runs on a
+   *  blocking thread, never the audio thread. */
+  showNotes: (input: ShowNotesInput) =>
+    call<ShowNotes>("ai_show_notes", { input }),
 };
 
 /** Bundled namespace for ergonomic imports. */

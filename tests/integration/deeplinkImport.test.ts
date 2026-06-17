@@ -60,7 +60,7 @@ describe("seedProjectFromImportLink", () => {
   it("parses the link, creates a project, and imports the take in order", async () => {
     const { client, parseImport, projectNew, importTakes } = makeIpc();
 
-    const meta = await seedProjectFromImportLink(
+    const { meta, request } = await seedProjectFromImportLink(
       client,
       "sundaystudio://import?path=%2FUsers%2Fola%2Fsermon.wav&returnTo=sundayrec",
     );
@@ -73,6 +73,8 @@ describe("seedProjectFromImportLink", () => {
     // The parsed file is laid onto the (now current) project as a take.
     expect(importTakes).toHaveBeenCalledWith(["/Users/ola/sermon.wav"]);
     expect(meta.name).toBe("sermon");
+    // The parsed handoff is returned so the caller can seed show-notes context.
+    expect(request.path).toBe("/Users/ola/sermon.wav");
 
     // Ordering: parse before create before import.
     const parseOrder = parseImport.mock.invocationCallOrder[0];
