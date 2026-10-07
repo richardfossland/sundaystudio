@@ -57,7 +57,7 @@ rtrb = "0.4"
 # nothing is recorded at the wrong speed. The rate-selection + resampler-wiring
 # logic is unit-tested (see `audio::recorder::rate` / `::resampler`); the live
 # capture path itself stays hardware-unverified (see `stream.rs`).
-rubato = "0.15"
+rubato = "5.0"
 
 # Loudness measurement (Phase 4.2) — EBU R128 / ITU-R BS.1770. A pure-Rust port
 # of libebur128 (no C toolchain), so it compiles in the default test gate. Gives
